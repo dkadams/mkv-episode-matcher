@@ -1,11 +1,8 @@
 import re
-import subprocess
-import tempfile
 from functools import lru_cache
 from pathlib import Path
 
 import chardet
-import numpy as np
 import torch
 import whisper
 from loguru import logger
@@ -13,6 +10,7 @@ from rapidfuzz import fuzz
 from rich import print
 from rich.console import Console
 
+from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
 from mkv_episode_matcher.utils import extract_season_episode
 
 console = Console()
@@ -55,14 +53,12 @@ class EpisodeMatcher:
         self.chunk_duration = 30
         self.skip_initial_duration = 300
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.temp_dir = Path(tempfile.gettempdir()) / "whisper_chunks"
-        self.temp_dir.mkdir(exist_ok=True)
         # Initialize subtitle cache
         self.subtitle_cache = SubtitleCache()
-        # Cache for extracted audio chunks
-        self.audio_chunks = {}
         # Store reference files to avoid repeated glob operations
         self.reference_files_cache = {}
+        # Initialize audio extractor
+        self.audio_extractor = AudioChunkExtractor(self.chunk_duration)
 
     def clean_text(self, text):
         text = text.lower().strip()
@@ -77,41 +73,6 @@ class EpisodeMatcher:
             fuzz.token_sort_ratio(whisper_clean, ref_clean) * 0.7
             + fuzz.partial_ratio(whisper_clean, ref_clean) * 0.3
         ) / 100.0
-
-    def extract_audio_chunk(self, mkv_file, start_time):
-        """Extract a chunk of audio from MKV file with caching."""
-        cache_key = (str(mkv_file), start_time)
-
-        if cache_key in self.audio_chunks:
-            return self.audio_chunks[cache_key]
-
-        chunk_path = self.temp_dir / f"chunk_{start_time}.wav"
-        if not chunk_path.exists():
-            cmd = [
-                "ffmpeg",
-                "-ss",
-                str(start_time),
-                "-t",
-                str(self.chunk_duration),
-                "-i",
-                mkv_file,
-                "-vn",  # Disable video
-                "-sn",  # Disable subtitles
-                "-dn",  # Disable data streams
-                "-acodec",
-                "pcm_s16le",
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                "-y",  # Overwrite output files without asking
-                str(chunk_path),
-            ]
-            subprocess.run(cmd, capture_output=True)
-
-        chunk_path_str = str(chunk_path)
-        self.audio_chunks[cache_key] = chunk_path_str
-        return chunk_path_str
 
     def load_reference_chunk(self, srt_file, chunk_idx):
         """
@@ -204,7 +165,7 @@ class EpisodeMatcher:
             start_time = self.skip_initial_duration + (chunk_idx * self.chunk_duration)
             logger.debug(f"Trying {model_name} model at {start_time} seconds")
 
-            audio_path = self.extract_audio_chunk(video_file, start_time)
+            audio_path = self.audio_extractor.extract_audio_chunk(video_file, start_time)
             logger.debug(f"Extracted audio chunk: {audio_path}")
 
             result = model.transcribe(audio_path, task="transcribe", language="en")
@@ -257,7 +218,7 @@ class EpisodeMatcher:
             )
         return None
 
-    def identify_episode(self, video_file, temp_dir, season_number):
+    def identify_episode(self, video_file, season_number):
         """Progressive episode identification with faster initial attempt."""
         try:
             # Get reference files first with caching
@@ -268,7 +229,7 @@ class EpisodeMatcher:
                 return None
 
             # Cache video duration
-            duration = get_video_duration(video_file)
+            duration = self.audio_extractor.get_video_duration(video_file)
 
             # Try with tiny model first (fastest)
             logger.info("Attempting match with tiny model...")
@@ -306,30 +267,9 @@ class EpisodeMatcher:
             return None
 
         finally:
-            # Cleanup temp files - keep this limited to only files we know we created
-            for chunk_info in self.audio_chunks.values():
-                try:
-                    Path(chunk_info).unlink(missing_ok=True)
-                except Exception as e:
-                    logger.warning(f"Failed to delete temp file {chunk_info}: {e}")
+            self.audio_extractor.cleanup()
 
 
-@lru_cache(maxsize=100)
-def get_video_duration(video_file):
-    """Get video duration with caching."""
-    duration = float(
-        subprocess.check_output([
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            video_file,
-        ]).decode()
-    )
-    return int(np.ceil(duration))
 
 
 def detect_file_encoding(file_path):
