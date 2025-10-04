@@ -207,8 +207,7 @@ def get_subtitles(show_id, seasons: set[int], config=None, max_retries=3):
         for episode in range(1, episodes + 1):
             logger.info(f"Processing Season {season}, Episode {episode}...")
 
-            series_cache_dir = Path(CACHE_DIR) / "data" / series_name
-            os.makedirs(series_cache_dir, exist_ok=True)
+            series_cache_dir = get_series_cache_path(series_name)
 
             # Check for existing subtitle in any supported format
             existing_subtitle = find_existing_subtitle(
@@ -297,6 +296,12 @@ def get_subtitles(show_id, seasons: set[int], config=None, max_retries=3):
                     else:
                         continue
                     break
+
+
+def get_series_cache_path(series_name: str) -> Path:
+    series_cache_dir = Path(CACHE_DIR) / "data" / series_name
+    os.makedirs(series_cache_dir, exist_ok=True)
+    return series_cache_dir
 
 
 def clean_text(text):
