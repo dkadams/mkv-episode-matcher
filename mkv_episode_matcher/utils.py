@@ -252,6 +252,11 @@ def get_subtitles(show_id, seasons: set[int], config=None, max_retries=3):
                             srt_file = subtitles.download_and_save(subtitle)
                             shutil.move(srt_file, srt_filepath)
                             logger.info(f"Subtitle saved to {srt_filepath}")
+                            opensubs_filepath = srt_filepath + ".opensubtitles"
+                            opensubs_json = subtitle.to_json()
+                            with open(opensubs_filepath, "w") as json_out:
+                                json_out.write(opensubs_json)
+                            logger.info(f"Subtitle metadata saved to {opensubs_filepath}")
                             break
                         except OpenSubtitlesException as e:
                             retry_count += 1
