@@ -28,3 +28,9 @@ class TextChunkExtractor:
             chunks.append(text_chunk)
 
         return chunks
+
+    def get_text_chunks(self, mkv_file):
+        return [chunk['text'] for chunk in self.get_chunks(mkv_file)]
+
+    def get_text(self, mkv_file):
+        return "\n".join(self.get_text_chunks(mkv_file))

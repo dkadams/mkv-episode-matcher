@@ -15,18 +15,18 @@ class SubtitleIndex:
         show_db_file = self.show_path.with_suffix('.chromadb')
 
         self.chromadb = chromadb.PersistentClient(path=show_db_file)
+        self.full_episodes = self.chromadb.get_or_create_collection(name="full-episodes",
+                                                                    metadata={"hnsw:space": "cosine"})
 
     def upsert(self, path):
-        full_episodes = self.chromadb.get_or_create_collection(name="full-episodes")
-
         sub_file = pysubs2.load(path)
         full_episode = "\n".join([line.plaintext for line in sub_file])
-        print(full_episode)
 
-        full_episodes.upsert(ids=[str(path)], documents=[full_episode])
+        self.full_episodes.upsert(ids=[str(path)], documents=[full_episode])
 
     def index_show(self):
         files = [f for f in self.show_path.iterdir() if f.is_file()]
         for file in files:
             self.upsert(file)
+
 
