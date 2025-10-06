@@ -8,7 +8,7 @@ from unittest import mock
 sys.path.append(str(Path(__file__).parent.parent.absolute()))
 
 # Import the modules we want to test
-from mkv_episode_matcher.utils import check_filename, normalize_path
+from mkv_episode_matcher.utils import normalize_path
 
 # Test paths to use in tests
 TEST_PATHS = [
@@ -40,20 +40,6 @@ class TestPathLibImplementation(unittest.TestCase):
             extracted_name,
             expected_show_name,
             "normalize_path.name should correctly extract the show name with trailing slash",
-        )
-
-    def test_check_filename_with_path_objects(self):
-        """Test that check_filename works with both Path objects and strings"""
-        # Test with string path
-        string_path = "/path/to/Show.S01E01.mkv"
-        self.assertTrue(
-            check_filename(string_path), "check_filename should work with string paths"
-        )
-
-        # Test with Path object
-        path_object = Path("/path/to/Show.S01E01.mkv")
-        self.assertTrue(
-            check_filename(path_object), "check_filename should work with Path objects"
         )
 
     def test_path_operations(self):
@@ -91,7 +77,7 @@ class TestPathLibImplementation(unittest.TestCase):
 
 
 class TestEpisodeMatcherShowNameExtraction(unittest.TestCase):
-    """Test the show name extraction in episode_matcher.py"""
+    """Test the show name extraction"""
 
     @mock.patch("mkv_episode_matcher.config.get_config")
     def test_episode_matcher_show_name_with_trailing_slash(self, mock_get_config):

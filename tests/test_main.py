@@ -5,10 +5,8 @@ import pytest
 
 from mkv_episode_matcher.config import get_config, set_config
 from mkv_episode_matcher.utils import (
-    check_filename,
     clean_text,
     extract_season_episode,
-    get_valid_seasons,
     rename_episode_file,
 )
 
@@ -53,15 +51,6 @@ def mock_config():
 
 
 class TestUtilities:
-    def test_get_valid_seasons(self, temp_show_dir):
-        seasons = get_valid_seasons(str(temp_show_dir))
-        assert len(seasons) == 1
-        assert str(temp_show_dir / "Season 1") in seasons
-
-    def test_check_filename(self):
-        assert check_filename("Show - S01E02.mkv") is True
-        assert check_filename("random_file.mkv") is False
-
     def test_rename_episode_file(self, temp_show_dir):
         original = temp_show_dir / "Season 1" / "episode1.mkv"
         new_name = "Show - S01E01.mkv"

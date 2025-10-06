@@ -191,11 +191,6 @@ def main():
         help="Download subtitles for the show",
     )
     parser.add_argument(
-        "--check-gpu",
-        action="store_true",
-        help="Check if GPU is available for faster processing",
-    )
-    parser.add_argument(
         "--verbose",
         "-v",
         action="store_true",
@@ -216,12 +211,6 @@ def main():
     if args.verbose:
         console.print("[bold cyan]Command-line Arguments[/bold cyan]")
         console.print(args)
-    if args.check_gpu:
-        from mkv_episode_matcher.utils import check_gpu_support
-
-        with console.status("[bold green]Checking GPU support..."):
-            check_gpu_support()
-        return
 
     logger.debug(f"Command-line arguments: {args}")
     # Onboarding: run if --onboard or config file missing
@@ -301,9 +290,6 @@ def main():
     )
     logger.info("Configuration set")
 
-    # Process the show
-    from mkv_episode_matcher.episode_matcher import process_show
-    from mkv_episode_matcher.utils import get_valid_seasons
 
     console.print()
     if args.dry_run:
@@ -314,45 +300,6 @@ def main():
                 border_style="yellow",
             )
         )
-
-    seasons = get_valid_seasons(show_dir)
-    if not seasons:
-        console.print(
-            "[bold red]Error:[/bold red] No seasons with .mkv files found in the show directory."
-        )
-        return
-
-    # If season wasn't specified and there are multiple seasons, let user choose
-    selected_season = args.season
-    if selected_season is None and len(seasons) > 1:
-        selected_season = select_season(seasons)
-
-    # Show what's going to happen
-    show_name = Path(show_dir).name
-    season_text = f"Season {selected_season}" if selected_season else "all seasons"
-
-    console.print(
-        f"[bold green]Processing[/bold green] [cyan]{show_name}[/cyan], {season_text}"
-    )
-
-    # # Setup progress spinner
-    # with Progress(
-    #     TextColumn("[bold green]Processing...[/bold green]"),
-    #     console=console,
-    # ) as progress:
-    #     task = progress.add_task("", total=None)
-    process_show(
-        selected_season,
-        dry_run=args.dry_run,
-        get_subs=args.get_subs,
-        verbose=args.verbose,
-        confidence=args.confidence,
-    )
-
-    console.print("[bold green]✓[/bold green] Processing completed successfully!")
-
-    # Show where logs are stored
-    console.print(f"\n[dim]Logs available at: {log_dir}[/dim]")
 
 
 # Run the main function if the script is run directly

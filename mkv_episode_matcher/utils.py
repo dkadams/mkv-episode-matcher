@@ -47,81 +47,6 @@ def normalize_path(path_str):
 
     return Path(path_str)
 
-
-def get_valid_seasons(show_dir):
-    """
-    Get all season directories that contain MKV files.
-
-    Args:
-        show_dir (str): Base directory for the TV show
-
-    Returns:
-        list: List of paths to valid season directories
-    """
-    # Get all season directories
-    show_path = normalize_path(show_dir)
-    season_paths = [str(show_path / d.name) for d in show_path.iterdir() if d.is_dir()]
-
-    # Filter seasons to only include those with .mkv files
-    valid_season_paths = []
-    for season_path in season_paths:
-        season_path_obj = Path(season_path)
-        mkv_files = [f for f in season_path_obj.iterdir() if f.name.endswith(".mkv")]
-        if mkv_files:
-            valid_season_paths.append(season_path)
-
-    if not valid_season_paths:
-        logger.warning(
-            f"No seasons with .mkv files found in show '{normalize_path(show_dir).name}'"
-        )
-    else:
-        logger.info(
-            f"Found {len(valid_season_paths)} seasons with .mkv files in '{normalize_path(show_dir).name}'"
-        )
-
-    return valid_season_paths
-
-
-def check_filename(filename):
-    """
-    Check if the filename is in the correct format (S01E02).
-
-    Args:
-        filename (str or Path): The filename to check.
-
-    Returns:
-        bool: True if the filename matches the expected pattern.
-    """
-    # Convert Path object to string if needed
-    if isinstance(filename, Path):
-        filename = str(filename)
-    # Check if the filename matches the expected format
-    match = re.search(r".*S\d+E\d+", filename)
-    return bool(match)
-
-
-def scramble_filename(original_file_path, file_number):
-    """
-    Scrambles the filename of the given file path by adding the series title and file number.
-
-    Args:
-        original_file_path (str): The original file path.
-        file_number (int): The file number to be added to the filename.
-
-    Returns:
-        None
-    """
-    logger.info(f"Scrambling {original_file_path}")
-    series_title = normalize_path(original_file_path).parent.parent.name
-    original_file_name = Path(original_file_path).name
-    extension = Path(original_file_path).suffix
-    new_file_name = f"{series_title} - {file_number:03d}{extension}"
-    new_file_path = Path(original_file_path).parent / new_file_name
-    if not new_file_path.exists():
-        logger.info(f"Renaming {original_file_name} -> {new_file_name}")
-        Path(original_file_path).rename(new_file_path)
-
-
 def rename_episode_file(original_file_path, new_filename):
     """
     Rename an episode file with a standardized naming convention.
@@ -315,70 +240,6 @@ def clean_text(text):
     # Strip leading/trailing whitespace
     return cleaned_text.strip()
 
-
-@logger.catch
-def process_reference_srt_files(series_name):
-    """
-    Process reference SRT files for a given series.
-
-    Args:
-        series_name (str): The name of the series.
-
-    Returns:
-        dict: A dictionary containing the reference files where the keys are the MKV filenames
-              and the values are the corresponding SRT texts.
-    """
-    from mkv_episode_matcher.__main__ import CACHE_DIR
-
-    reference_files = {}
-    reference_dir = Path(CACHE_DIR) / "data" / series_name
-
-    for dirpath, _, filenames in os.walk(reference_dir):
-        for filename in filenames:
-            if filename.lower().endswith(".srt"):
-                srt_file = Path(dirpath) / filename
-                logger.info(f"Processing {srt_file}")
-                srt_text = extract_srt_text(srt_file)
-                season, episode = extract_season_episode(filename)
-                mkv_filename = f"{series_name} - S{season:02}E{episode:02}.mkv"
-                reference_files[mkv_filename] = srt_text
-
-    return reference_files
-
-
-def extract_srt_text(filepath):
-    """
-    Extracts text content from an SRT file.
-
-    Args:
-        filepath (str): Path to the SRT file.
-
-    Returns:
-        list: List of text lines from the SRT file.
-    """
-    # Read the file content
-    with open(filepath) as f:
-        content = f.read()
-
-    # Split into subtitle blocks
-    blocks = content.strip().split("\n\n")
-
-    text_lines = []
-    for block in blocks:
-        lines = block.split("\n")
-        if len(lines) < 3:
-            continue
-
-        # Skip index and timestamp, get all remaining lines as text
-        text = " ".join(lines[2:])
-        # Remove stage directions and tags
-        text = re.sub(r"\[.*?\]|\<.*?\>", "", text)
-        if text:
-            text_lines.append(text)
-
-    return text_lines
-
-
 def extract_season_episode(filename):
     """
     Extract season and episode numbers from filename with support for multiple formats.
@@ -402,28 +263,6 @@ def extract_season_episode(filename):
             return int(match.group(1)), int(match.group(2))
 
     return None, None
-
-
-def process_srt_files(show_dir):
-    """
-    Process all SRT files in the given directory and its subdirectories.
-
-    Args:
-        show_dir (str): The directory path where the SRT files are located.
-
-    Returns:
-        dict: A dictionary containing the SRT file paths as keys and their corresponding text content as values.
-    """
-    srt_files = {}
-    for dirpath, _, filenames in os.walk(show_dir):
-        for filename in filenames:
-            if filename.lower().endswith(".srt"):
-                srt_file = Path(dirpath) / filename
-                logger.info(f"Processing {srt_file}")
-                srt_text = extract_srt_text(srt_file)
-                srt_files[srt_file] = srt_text
-    return srt_files
-
 
 def compare_and_rename_files(srt_files, reference_files, dry_run=False):
     """
@@ -472,28 +311,3 @@ def compare_text(text1, text2):
     # Compare the two lists of text lines
     matching_lines = set(flat_text1).intersection(flat_text2)
     return len(matching_lines)
-
-
-def check_gpu_support():
-    logger.info("Checking GPU support...")
-    console.print("[bold]Checking GPU support...[/bold]")
-    if torch.cuda.is_available():
-        logger.info(f"CUDA is available. Using GPU: {torch.cuda.get_device_name(0)}")
-        console.print(
-            Panel.fit(
-                f"CUDA is available. Using GPU: {torch.cuda.get_device_name(0)}",
-                title="GPU Support",
-                border_style="magenta",
-            )
-        )
-    else:
-        logger.warning(
-            "CUDA not available. Using CPU. Refer to https://pytorch.org/get-started/locally/ for GPU support."
-        )
-        console.print(
-            Panel.fit(
-                "CUDA not available. Using CPU. Refer to https://pytorch.org/get-started/locally/ for GPU support.",
-                title="GPU Support",
-                border_style="red",
-            )
-        )
