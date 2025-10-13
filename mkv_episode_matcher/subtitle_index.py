@@ -2,13 +2,11 @@
 import chromadb
 import pysubs2
 
-from mkv_episode_matcher.__main__ import CONFIG_FILE
-from mkv_episode_matcher.config import get_config
 from mkv_episode_matcher.utils import get_series_cache_path
 
 class SubtitleIndex:
-    def __init__(self, show_name):
-        self.config = get_config(CONFIG_FILE)
+    def __init__(self, config, show_name):
+        self.config = config
         self.show_name = show_name
 
         self.show_path = get_series_cache_path(self.show_name)

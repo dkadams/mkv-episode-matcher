@@ -1,113 +1,86 @@
 # tmdb_client.py
-import time
-from threading import Lock
+from functools import cache
 
 import requests
 from loguru import logger
 
-from mkv_episode_matcher.__main__ import CONFIG_FILE
-from mkv_episode_matcher.config import get_config
-
 BASE_IMAGE_URL = "https://image.tmdb.org/t/p/original"
 
-
-class RateLimitedRequest:
+def search_series(config, series_name, page=1):
     """
-    A class that represents a rate-limited request object.
-
-    Attributes:
-        rate_limit (int): Maximum number of requests allowed per period.
-        period (int): Period in seconds.
-        requests_made (int): Counter for requests made.
-        start_time (float): Start time of the current period.
-        lock (Lock): Lock for synchronization.
-    """
-
-    def __init__(self, rate_limit=30, period=1):
-        self.rate_limit = rate_limit
-        self.period = period
-        self.requests_made = 0
-        self.start_time = time.time()
-        self.lock = Lock()
-
-    def get(self, url):
-        """
-        Sends a rate-limited GET request to the specified URL.
-
-        Args:
-            url (str): The URL to send the request to.
-
-        Returns:
-            Response: The response object returned by the request.
-        """
-        with self.lock:
-            if self.requests_made >= self.rate_limit:
-                sleep_time = self.period - (time.time() - self.start_time)
-                if sleep_time > 0:
-                    time.sleep(sleep_time)
-                self.requests_made = 0
-                self.start_time = time.time()
-
-            self.requests_made += 1
-
-        response = requests.get(url)
-        return response
-
-
-# Initialize rate-limited request
-rate_limited_request = RateLimitedRequest(rate_limit=30, period=1)
-
-
-def fetch_show_id(show_name):
-    """
-    Fetch the TMDb ID for a given show name.
+    Search TMDB for a series by name.
 
     Args:
-        show_name (str): The name of the show.
-
+        config (Config): Configuration object
+        series_name (str): The name of the series.
+        page (int): The page of data to fetch
     Returns:
-        str: The TMDb ID of the show, or None if not found.
+        Any: JSON results of the query
     """
-    config = get_config(CONFIG_FILE)
-    tmdb_api_key = config.get("tmdb_api_key")
-    url = f"https://api.themoviedb.org/3/search/tv?query={show_name}&api_key={tmdb_api_key}"
-    response = requests.get(url)
+    tmdb_api_key = config.stored.get("api", "tmdb_api_key")
+    response = requests.get(f"https://api.themoviedb.org/3/search/tv", {
+        "query": series_name,
+        "api_key": tmdb_api_key,
+        "page": page
+    })
+    response.raise_for_status()
     if response.status_code == 200:
-        results = response.json().get("results", [])
-        if results:
-            return str(results[0]["id"])
-    return None
+        return response.json()
+    else:
+        # Don't expect to get here
+        return None
 
-
-def fetch_season_details(show_id, season_number):
+def fetch_series_detail(config, series_id):
     """
-    Fetch the total number of episodes for a given show and season from the TMDb API.
+    Fetch the TMDb data for a series.
 
     Args:
+        config (Config): Configuration object
+        series_id (int): A TMDB series id
+    Returns:
+        Any: Series details JSON
+    """
+    tmdb_api_key = config.stored.get("api", "tmdb_api_key")
+    response = requests.get(f"https://api.themoviedb.org/3/tv/{series_id}", {
+        "api_key": tmdb_api_key
+    })
+    response.raise_for_status()
+    if response.status_code == 200:
+        return response.json()
+    else:
+        # Don't expect to get here
+        return None
+
+def fetch_season_details(config, show_id, season_numbers):
+    """
+    Fetches the series details and the details for the specified seasons.
+
+    Args:
+        config (Config): Configuration object
         show_id (str): The ID of the show on TMDb.
-        season_number (int): The season number to fetch details for.
+        season_numbers (list[int]): The season numbers to fetch details for.
 
     Returns:
         int: The total number of episodes in the season, or 0 if the API request failed.
     """
-    logger.info(f"Fetching season details for Season {season_number}...")
-    config = get_config(CONFIG_FILE)
-    tmdb_api_key = config.get("tmdb_api_key")
-    url = f"https://api.themoviedb.org/3/tv/{show_id}/season/{season_number}?api_key={tmdb_api_key}"
+    logger.info(f"Fetching season details for Season {season_numbers}...")
+    tmdb_api_key = config.stored.get("api", "tmdb_api_key")
     try:
-        response = requests.get(url)
+        season_reqs = [f"season/{season_number}" for season_number in season_numbers]
+        response = requests.get(f"https://api.themoviedb.org/3/tv/{show_id}", {
+            "api_key": tmdb_api_key,
+            "append_to_response": ",".join(season_reqs)
+        })
         response.raise_for_status()
-        season_data = response.json()
-        total_episodes = len(season_data.get("episodes", []))
-        return total_episodes
+        return response.json()
     except requests.exceptions.RequestException as e:
-        logger.error(f"Failed to fetch season details for Season {season_number}: {e}")
+        logger.error(f"Failed to fetch season details for Season {season_numbers}: {e}")
         return 0
     except KeyError:
         logger.error(
-            f"Missing 'episodes' key in response JSON data for Season {season_number}"
+            f"Missing 'episodes' key in response JSON data for Season {season_numbers}"
         )
-        return 0
+        return None
 
 
 def get_number_of_seasons(show_id):
@@ -123,7 +96,7 @@ def get_number_of_seasons(show_id):
     Raises:
     - requests.HTTPError: If there is an error while making the API request.
     """
-    config = get_config(CONFIG_FILE)
+    config = _get_config(CONFIG_FILE)
     tmdb_api_key = config.get("tmdb_api_key")
     url = f"https://api.themoviedb.org/3/tv/{show_id}?api_key={tmdb_api_key}"
     response = requests.get(url)

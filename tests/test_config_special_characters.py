@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from mkv_episode_matcher.config import get_config, set_config
+from mkv_episode_matcher.config import _get_config, store_api_config
 
 
 class TestConfigSpecialCharacters:
@@ -34,7 +34,7 @@ class TestConfigSpecialCharacters:
         password_with_percent = "H7z*X$X29JdJ^#%Q"  # gitguardian:ignore
         
         # This should not raise a ValueError
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -45,7 +45,7 @@ class TestConfigSpecialCharacters:
         )
         
         # Verify the config was written successfully
-        config = get_config(temp_config_file)
+        config = _get_config(temp_config_file)
         assert config is not None
         assert config["open_subtitles_password"] == password_with_percent
 
@@ -53,7 +53,7 @@ class TestConfigSpecialCharacters:
         """Test that passwords with multiple % symbols work correctly."""
         password_with_percents = "password%with%multiple%percent%signs"
         
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -63,7 +63,7 @@ class TestConfigSpecialCharacters:
             temp_config_file,
         )
         
-        config = get_config(temp_config_file)
+        config = _get_config(temp_config_file)
         assert config["open_subtitles_password"] == password_with_percents
 
     def test_password_with_interpolation_like_syntax(self, temp_config_file, mock_config_data):
@@ -71,7 +71,7 @@ class TestConfigSpecialCharacters:
         # This resembles ConfigParser interpolation syntax but should be treated literally
         password_with_interpolation = "%(section)s_password_%(option)s"
         
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -81,7 +81,7 @@ class TestConfigSpecialCharacters:
             temp_config_file,
         )
         
-        config = get_config(temp_config_file)
+        config = _get_config(temp_config_file)
         assert config["open_subtitles_password"] == password_with_interpolation
 
     def test_password_with_various_special_characters(self, temp_config_file, mock_config_data):
@@ -96,7 +96,7 @@ class TestConfigSpecialCharacters:
         ]
         
         for password in special_passwords:
-            set_config(
+            store_api_config(
                 mock_config_data["tmdb_api_key"],
                 mock_config_data["open_subtitles_api_key"],
                 mock_config_data["open_subtitles_user_agent"],
@@ -106,7 +106,7 @@ class TestConfigSpecialCharacters:
                 temp_config_file,
             )
             
-            config = get_config(temp_config_file)
+            config = _get_config(temp_config_file)
             assert config["open_subtitles_password"] == password, f"Failed for password: {password}"
 
     def test_original_bug_case(self, temp_config_file, mock_config_data):
@@ -116,7 +116,7 @@ class TestConfigSpecialCharacters:
         
         # Before the fix, this would raise:
         # ValueError: invalid interpolation syntax in 'H7z*X$X29JdJ^#%Q' at position 14
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -127,7 +127,7 @@ class TestConfigSpecialCharacters:
         )
         
         # Verify we can read it back correctly
-        config = get_config(temp_config_file)
+        config = _get_config(temp_config_file)
         assert config is not None
         assert config["open_subtitles_password"] == problematic_password
         
@@ -140,7 +140,7 @@ class TestConfigSpecialCharacters:
         """Test that empty passwords are handled correctly."""
         empty_password = ""
         
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -150,7 +150,7 @@ class TestConfigSpecialCharacters:
             temp_config_file,
         )
         
-        config = get_config(temp_config_file)
+        config = _get_config(temp_config_file)
         assert config["open_subtitles_password"] == empty_password
 
     def test_config_persistence(self, temp_config_file, mock_config_data):
@@ -158,7 +158,7 @@ class TestConfigSpecialCharacters:
         password = "persistent%password#123"
         
         # Set config
-        set_config(
+        store_api_config(
             mock_config_data["tmdb_api_key"],
             mock_config_data["open_subtitles_api_key"],
             mock_config_data["open_subtitles_user_agent"],
@@ -170,5 +170,5 @@ class TestConfigSpecialCharacters:
         
         # Read config multiple times to ensure consistency
         for _ in range(3):
-            config = get_config(temp_config_file)
+            config = _get_config(temp_config_file)
             assert config["open_subtitles_password"] == password
