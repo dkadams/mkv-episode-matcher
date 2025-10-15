@@ -5,6 +5,8 @@ from mkv_episode_matcher.config import edit_config, CONFIG_FILE
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
+from mkv_episode_matcher.subtitle_index import index_subtitles
+
 
 def build_args_parser():
     parser = get_root_parser()
@@ -19,6 +21,7 @@ def build_args_parser():
     add_config_parser(subparsers, config_parser)
     add_init_series(subparsers, config_parser, series_dir_parser)
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
+    add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -89,6 +92,14 @@ def add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
                                                        episode_parser],
                                               help="Fetch subtitles for a series")
     fetch_subs_parser.set_defaults(func=download_subtitles)
+
+def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser):
+    index_subs_parser = subparsers.add_parser("index-subs",
+                                              parents=[config_parser,
+                                                       series_dir_parser,
+                                                       episode_parser],
+                                              help="Index subtitles for a series")
+    index_subs_parser.set_defaults(func=index_subtitles)
 
 
 def get_series_dir_parser() -> argparse.ArgumentParser:

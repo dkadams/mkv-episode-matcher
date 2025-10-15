@@ -51,6 +51,32 @@ wheels = [
 ]
 
 [[package]]
+name = "babelfish"
+version = "0.6.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version < '3.10'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/02/0d/e72bf59672ebceae99cd339106df2b0d59964e00a04f7286ae9279d9da6c/babelfish-0.6.0.tar.gz", hash = "sha256:2dadfadd1b205ca5fa5dc9fa637f5b7933160a0418684c7c46a7a664033208a2", size = 87807, upload-time = "2021-08-09T17:02:29.815Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/2c/f7951f771261da6740af14fd9698064616aa040780cd8a03243fc43165c7/babelfish-0.6.0-py3-none-any.whl", hash = "sha256:268f1c6279f2a04a66837972e8a9f3dcc68e16f1201eec57d2a4b828a8b41b11", size = 93560, upload-time = "2021-08-09T17:02:28.765Z" },
+]
+
+[[package]]
+name = "babelfish"
+version = "0.6.1"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.12'",
+    "python_full_version == '3.11.*'",
+    "python_full_version == '3.10.*'",
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c5/8f/17ff889327f8a1c36a28418e686727dabc06c080ed49c95e3e2424a77aa6/babelfish-0.6.1.tar.gz", hash = "sha256:decb67a4660888d48480ab6998309837174158d0f1aa63bebb1c2e11aab97aab", size = 87706, upload-time = "2024-05-09T21:16:24.357Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/a1/bd4f759db13cd8beb9c9f68682aced5d966781b9d7380cf514a306f56762/babelfish-0.6.1-py3-none-any.whl", hash = "sha256:512f1501d4c8f7d38f0921f48660be7542de1a7b24abb6a6a65324a670150293", size = 94231, upload-time = "2024-05-09T21:16:22.633Z" },
+]
+
+[[package]]
 name = "backoff"
 version = "2.2.1"
 source = { registry = "https://pypi.org/simple" }
@@ -690,6 +716,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/e7/2d/1bb0572f0a2eaab100b4635c6c2cd0d37e3cda5554037e3f90b1bc428d56/grpcio-1.75.1-cp39-cp39-musllinux_1_2_x86_64.whl", hash = "sha256:67697efef5a98d46d5db7b1720fa4043536f8b8e5072a5d61cfca762f287e939", size = 7491470, upload-time = "2025-09-26T09:03:28.906Z" },
     { url = "https://files.pythonhosted.org/packages/aa/e0/1e962dcb64019bbd87eedcfacdedb83af0f66da01f2f6e03d69b0aa1b7f0/grpcio-1.75.1-cp39-cp39-win32.whl", hash = "sha256:52015cf73eb5d76f6404e0ce0505a69b51fd1f35810b3a01233b34b10baafb41", size = 3951697, upload-time = "2025-09-26T09:03:31.535Z" },
     { url = "https://files.pythonhosted.org/packages/87/bc/47fb3aaa77e7d657999937ec1026beba9e37f3199599fe510f762d31da97/grpcio-1.75.1-cp39-cp39-win_amd64.whl", hash = "sha256:9fe51e4a1f896ea84ac750900eae34d9e9b896b5b1e4a30b02dc31ad29f36383", size = 4645764, upload-time = "2025-09-26T09:03:34.071Z" },
+]
+
+[[package]]
+name = "guessit"
+version = "3.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "babelfish", version = "0.6.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "babelfish", version = "0.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "python-dateutil" },
+    { name = "rebulk" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/07/5a88020bfe2591af2ffc75841200b2c17ff52510779510346af5477e64cd/guessit-3.8.0.tar.gz", hash = "sha256:6619fcbbf9a0510ec8c2c33744c4251cad0507b1d573d05c875de17edc5edbed", size = 271285, upload-time = "2023-12-14T10:24:20.582Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/9b/924a8f9709c3143d4c9a301a88042cbce37e09789378217284b19d4f8132/guessit-3.8.0-py3-none-any.whl", hash = "sha256:eb5747b1d0fbca926562c1e5894dbc3f6507c35e8c0bd9e38148401cd9579d83", size = 206049, upload-time = "2023-12-14T10:24:17.753Z" },
 ]
 
 [[package]]
@@ -1501,6 +1542,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "configparser" },
     { name = "ffmpeg" },
+    { name = "guessit" },
     { name = "loguru" },
     { name = "openai-whisper" },
     { name = "opensubtitlescom" },
@@ -1531,6 +1573,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=1.1.0" },
     { name = "configparser", specifier = ">=7.1.0" },
     { name = "ffmpeg", specifier = ">=1.4" },
+    { name = "guessit", specifier = ">=3.8.0" },
     { name = "loguru", specifier = ">=0.7.2" },
     { name = "openai-whisper", specifier = ">=20240930" },
     { name = "opensubtitlescom", specifier = ">=0.1.5" },
@@ -2857,6 +2900,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/0c/ac8f7aaf663f213840733ed7b17e289f7ce6447897dc05e1f485d3f1c2ed/rapidfuzz-3.11.0-pp39-pypy39_pp73-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:d71da0012face6f45432a11bc59af19e62fac5a41f8ce489e80c0add8153c3d1", size = 5479629, upload-time = "2024-12-17T18:09:58.741Z" },
     { url = "https://files.pythonhosted.org/packages/37/70/fca6ab811ad3ed86d2eff552031198af85511e8c7a491f2b5f5d69e1d2d6/rapidfuzz-3.11.0-pp39-pypy39_pp73-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ff38378346b7018f42cbc1f6d1d3778e36e16d8595f79a312b31e7c25c50bd08", size = 3063189, upload-time = "2024-12-17T18:10:01.25Z" },
     { url = "https://files.pythonhosted.org/packages/51/99/0fc0952541a2324b374cec012560207a0d52416475bf105c705985bf804b/rapidfuzz-3.11.0-pp39-pypy39_pp73-win_amd64.whl", hash = "sha256:6668321f90aa02a5a789d4e16058f2e4f2692c5230252425c3532a8a62bc3424", size = 1545313, upload-time = "2024-12-17T18:10:03.832Z" },
+]
+
+[[package]]
+name = "rebulk"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f2/06/24c69f8d707c9eefc1108a64e079da56b5f351e3f59ed76e8f04b9f3e296/rebulk-3.2.0.tar.gz", hash = "sha256:0d30bf80fca00fa9c697185ac475daac9bde5f646ce3338c9ff5d5dc1ebdfebc", size = 261685, upload-time = "2023-02-18T09:10:14.378Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/84/4d/df073d593f7e7e4a5a7e19148b2e9b4ae63b4ddcbb863f1e7bb2b6f19c62/rebulk-3.2.0-py3-none-any.whl", hash = "sha256:6bc31ae4b37200623c5827d2f539f9ec3e52b50431322dad8154642a39b0a53e", size = 56298, upload-time = "2023-02-18T09:10:12.435Z" },
 ]
 
 [[package]]

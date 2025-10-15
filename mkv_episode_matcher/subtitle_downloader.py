@@ -1,151 +1,33 @@
-import json
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import requests
 from loguru import logger
-from opensubtitlescom import OpenSubtitles, opensubtitles
+from opensubtitlescom import OpenSubtitles, opensubtitles, \
+    OpenSubtitlesException
+from opensubtitlescom.responses import Subtitle, DownloadResponse
 from rich.console import Console
 from rich.table import Table
+
+from mkv_episode_matcher.episode import get_specified_episodes, Episode
+from mkv_episode_matcher.series import SeriesDirectoryProcessor
 
 console = Console()
 
 def download_subtitles(config):
-    series_dirs = [Path(dir).resolve() for dir in config.args.series_dirs]
-    for series_dir in series_dirs:
-        console.print(f"[bold green]Downloaded Subtitles Series: {series_dir}[/bold green]")
+    def series_downloader(series):
+        console.print(f"[bold green]Downloading subtitles for: {series.name}")
 
-        series_dot_dir = series_dir / ".mkv-episode-matcher"
-        series_file = series_dot_dir / "series.tmdb.json"
-        if not series_file.exists():
-            console.print(f"[bold red]Error:[/bold red] Series data not initialized for {series_dir}. run `mkv-episode-matcher init {series_dir}` first.")
+        episodes = get_specified_episodes(config, series)
 
-        with open(series_file, 'r') as file:
-            series_detail = json.load(file)
-
-        seasons_by_number = get_seasons_by_number(series_detail)
-        episodes = get_episodes_to_download(config, series_detail["name"], seasons_by_number)
-
-        downloader = OpenSubtitlesDownloader(config, series_dir, series_detail["name"])
+        downloader = OpenSubtitlesDownloader(config, series.dir, series.name)
         for episode in episodes:
             downloader.download(episode)
 
         console.print(f"[bold green]Subtitles downloaded")
 
-def get_episodes_to_download(config, series_name:str, seasons_by_number:dict[int, "Season"]) -> set["Episode"]:
-    result = set()
-    specs = get_specs(config)
-    for spec in specs:
-        season_number, episode_spec = spec
-        season = seasons_by_number.get(season_number)
-        if not season:
-            console.print(f"[bold red]Error: Season: {season_number} "
-                          f"not found for {config.args.series_name} "
-                          f"(tried to match {spec}).")
-            continue
-
-        try:
-            episodes = season.episodes_matching(episode_spec)
-            if episodes:
-                result.update(episodes)
-            else:
-                console.print(f"[orange1]Warn: No episodes matching {spec} "
-                              f"found for {series_name} "
-                              f"season: {season_number}.")
-        except UnknownEpisodeError as e:
-            console.print(f"[orange1]Error: Episode {e.episode_number} "
-                          f"for specifier {spec} "
-                          f"does not exist for {series_name} "
-                          f"season: {season_number}.")
-
-    return result
-
-
-def get_specs(config):
-    # Normalize filtering to a list of episode specifiers
-    return (config.args.episodes_specifiers
-            or [(season_number, None) for season_number in config.args.season_numbers])
-
-def get_seasons_by_number(series_detail):
-    season_detail = [season for key, season in series_detail.items()
-                     if key.startswith("season/")]
-
-    result = {}
-    for season in season_detail:
-        season_number = season["season_number"]
-        episodes = get_episodes(season)
-        result[season_number] = Season(season_number, episodes)
-    return result
-
-def get_episodes(season_detail):
-    result = {}
-    for episode_detail in season_detail["episodes"]:
-        episode_number = episode_detail["episode_number"]
-        episode_id = episode_detail["id"]
-        result[episode_number] = Episode(season_detail["season_number"],
-                                         episode_number, episode_id)
-    return result
-
-@dataclass(eq=True, frozen=True)
-class Episode:
-    season_number: int
-    episode_number: int
-    tmdb_id: int
-
-    def short_str(self):
-        return f"S{self.season_number:02d}E{self.episode_number:02d}"
-
-@dataclass(eq=True, frozen=True)
-class Season:
-    season_number: int
-    episodes: dict[int, Episode]
-
-    def episodes_matching(self, episode_spec):
-        if episode_spec is None:
-            return self.episodes.values()
-        elif isinstance(episode_spec, int):
-            return self.get_episodes([episode_spec])
-        elif isinstance(episode_spec, list):
-            return self.get_episodes(episode_spec)
-        elif isinstance(episode_spec, tuple):
-            start, end = episode_spec
-            return self.get_episodes_in_range(start, end)
-        else:
-            raise ValueError(f"Invalid episode specifier: {episode_spec}")
-
-    def get_episodes(self, episode_numbers: list[int]):
-        episodes = []
-        for episode_number in episode_numbers:
-            episode = self.episodes[int(episode_number)]
-            if episode:
-                episodes.append(episode)
-            else:
-                console.print(f"[red]Episode not found: {episode_number}")
-                raise UnknownEpisodeError(self, episode_number)
-        return episodes
-
-    def get_episodes_in_range(self, start, end) -> list[Episode]:
-        if start is None:
-            return [episode for episode in self.episodes.values()
-                    if episode.episode_number <= end]
-        elif end is None:
-            return [episode for episode in self.episodes.values()
-                    if episode.episode_number >= start]
-        else:
-            episode_number_range = range(start, end + 1)
-            return [episode for episode in self.episodes.values()
-                    if episode.episode_number in episode_number_range]
-
-class UnknownEpisodeError(Exception):
-    def __init__(self, season, episode_number):
-        self.message = f"Unknown episode: {season}:{episode_number}"
-        self.season = season
-        self.episode_number = episode_number
-
-    def __str__(self):
-        return self.message
-
+    SeriesDirectoryProcessor(config).process_series(series_downloader)
 
 class OpenSubtitlesDownloader:
     def __init__(self, config, series_dir, series_name):
@@ -173,35 +55,58 @@ class OpenSubtitlesDownloader:
             console.print(f"[bold green]\tsubtitle exists: {existing_subtitle}. Skipping download.[/bold green]")
             return
 
-        # Default to standard format for new downloads
-        srt_filepath = str(
-            self.subtitle_dir / f"{self.series_name} - {episode.short_str()}.srt"
-        )
-
         response = self.client.search(tmdb_id=episode.tmdb_id, languages="en")
         if len(response.data) == 0:
             console.print(f"No subtitles found for {self.series_name} - {episode.short_str()}")
             return
 
         console.print(f"[green]Found {len(response.data)} subtitles for {self.series_name} - {episode.short_str()}")
-        # TODO configurable selection for subtitles
         subtitles = sorted(response.data,
                            key=lambda subtitle: subtitle.download_count
                                                 + subtitle.new_download_count, reverse=True)
         self.print_subtitles_table(episode, subtitles)
 
+        # TODO configurable selection for selected_subtitle. Most downloaded is
+        # what's selected here.
         selected_subtitle = subtitles[0]
+
+        srt_filename = f"{self.series_name} - {episode.short_str()}.srt"
+        srt_filepath = self.subtitle_dir / srt_filename
+
         srt_file = self.client.download_and_save(selected_subtitle)
         if not self.subtitle_dir.exists():
             self.subtitle_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(srt_file, srt_filepath)
         logger.info(f"Subtitle saved to {srt_filepath}")
 
-        opensubs_filepath = srt_filepath + ".opensubtitles"
+        opensubs_filepath = srt_filepath.with_suffix(".opensubtitles")
         opensubs_json = selected_subtitle.to_json()
         with open(opensubs_filepath, "w") as json_out:
             json_out.write(opensubs_json)
         logger.info(f"Subtitle metadata saved to {opensubs_filepath}")
+
+    def download_srt_file(self, subtitle: Subtitle, path: Path):
+        if self.client.user_downloads_remaining <= 0:
+            raise OpenSubtitlesException(
+                "Download limit reached. " 
+                "Please upgrade your OpenSubtitles account "
+                "or wait for your quota to reset (~24hrs)"
+            )
+
+        download_body = {
+            "file_id": subtitle.file_id,
+            "sub_format": "srt"
+        }
+        raw_api_response = self.client.send_api("download", download_body)
+        api_response = DownloadResponse(raw_api_response)
+        self.client.user_downloads_remaining = api_response.remaining
+
+        download_response = requests.get(api_response.link)
+        download_response.raise_for_status()
+
+        with open(path, "wb") as f:
+            f.write(download_response.content)
+
 
     def find_existing_subtitle(self, episode: Episode) -> Optional[Path]:
         """

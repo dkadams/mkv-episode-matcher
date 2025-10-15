@@ -1,5 +1,4 @@
 import argparse
-import re
 from typing import List, Optional, Tuple, Union
 
 # Public types for consumers/tests
