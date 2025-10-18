@@ -2,6 +2,7 @@ import argparse
 
 from mkv_episode_matcher import __version__
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
+from mkv_episode_matcher.episode_matcher import match_episodes
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
@@ -22,6 +23,7 @@ def build_args_parser():
     add_init_series(subparsers, config_parser, series_dir_parser)
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
     add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser)
+    add_match(subparsers, config_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -102,11 +104,26 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser)
     index_subs_parser.set_defaults(func=index_subtitles)
 
 
+def add_match(subparsers, config_parser):
+    match_parser = subparsers.add_parser("match",
+                                         parents=[config_parser],
+                                         help="Match episodes of a series")
+
+    match_parser.add_argument('video_files',
+                              nargs='+',
+                              help="Path to one or more video files to match, "
+                                   "or directories to recursively search for video files")
+    match_parser.add_argument('--extension', '-e',
+                              nargs='+',
+                              default=".mkv",
+                              help="File extension to match (default: .mkv)")
+    match_parser.set_defaults(func=match_episodes)
+
 def get_series_dir_parser() -> argparse.ArgumentParser:
     series_dir_parser = argparse.ArgumentParser(add_help=False)
     series_dir_parser.add_argument('series_dirs',
                                    nargs='+',
-                                   help="Path to the root directory of the series")
+                                   help="Path to the root directory of one or more series")
     return series_dir_parser
 
 

@@ -78,7 +78,10 @@ class Episode:
     tmdb_id: int
 
     def short_str(self):
-        return f"S{self.season_number:02d}E{self.episode_number:02d}"
+        return episode_str(self.season_number, self.episode_number)
+
+def episode_str(season_number, episode_number):
+    return f"S{season_number:02d}E{episode_number:02d}"
 
 @dataclass(eq=True, frozen=True)
 class Season:

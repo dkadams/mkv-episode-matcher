@@ -46,6 +46,8 @@ class SeriesInitializer:
         # The season detail response **includes** the series detail, so we write
         # it as the series detail.
         seasons_detail = fetch_season_details(self.config, series_id, seasons)
+
+        self.series_dot_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Writing series detail to {series_file}")
         with open(series_file, "w", encoding="utf-8") as out:
             json.dump(seasons_detail, out)
