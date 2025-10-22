@@ -3,6 +3,7 @@ import argparse
 from mkv_episode_matcher import __version__
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
 from mkv_episode_matcher.episode_matcher import match_episodes
+from mkv_episode_matcher.indexed_episode_matcher import match_debug
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
@@ -24,6 +25,7 @@ def build_args_parser():
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
     add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser)
     add_match(subparsers, config_parser)
+    add_match_debug(subparsers, config_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -83,7 +85,7 @@ def add_init_series(subparsers, config_parser, series_dir_parser):
     init_show_parser.add_argument("--id", dest="series_id",
                                   help="The TMDB id of the series")
     init_show_parser.add_argument("--refresh", action="store_true",
-                                  help="Refresh of the series details")
+                                  help="Refresh the series details")
     init_show_parser.set_defaults(func=init_series)
 
 
@@ -93,6 +95,8 @@ def add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
                                                        series_dir_parser,
                                                        episode_parser],
                                               help="Fetch subtitles for a series")
+    fetch_subs_parser.add_argument("--refresh", action="store_true",
+                                   help="Download subtitles even if they already exist")
     fetch_subs_parser.set_defaults(func=download_subtitles)
 
 def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser):
@@ -118,6 +122,17 @@ def add_match(subparsers, config_parser):
                               default=".mkv",
                               help="File extension to match (default: .mkv)")
     match_parser.set_defaults(func=match_episodes)
+
+
+def add_match_debug(subparsers, config_parser):
+        parser = subparsers.add_parser("match-debug",
+                                       parents=[config_parser],
+                                       help="Debug matching logic")
+
+        parser.add_argument('extract_file',
+                                  help="Path to an extract file for already labeled video file")
+
+        parser.set_defaults(func=match_debug)
 
 def get_series_dir_parser() -> argparse.ArgumentParser:
     series_dir_parser = argparse.ArgumentParser(add_help=False)

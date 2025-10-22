@@ -10,8 +10,9 @@ from opensubtitlescom.responses import Subtitle, DownloadResponse
 from rich.console import Console
 from rich.table import Table
 
+from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.episode import get_specified_episodes, Episode
-from mkv_episode_matcher.series import SeriesDirectoryProcessor
+from mkv_episode_matcher.series import SeriesDirectoryProcessor, Series
 
 console = Console()
 
@@ -21,7 +22,7 @@ def download_subtitles(config):
 
         episodes = get_specified_episodes(config, series)
 
-        downloader = OpenSubtitlesDownloader(config, series.dir, series.name)
+        downloader = OpenSubtitlesDownloader(config, series)
         for episode in episodes:
             downloader.download(episode)
 
@@ -30,11 +31,14 @@ def download_subtitles(config):
     SeriesDirectoryProcessor(config).process_series(series_downloader)
 
 class OpenSubtitlesDownloader:
-    def __init__(self, config, series_dir, series_name):
+    def __init__(self, config: Configuration, series: Series):
         if not config.has_required_settings():
             console.print("[bold red]Error: missing configuration settings. Run mkv-episode-matcher config")
             return
 
+        self.config = config
+        self.series = series
+        
         api_config = config.stored["api"]
         open_subtitles_api_key = api_config.get("open_subtitles_api_key")
         open_subtitles_user_agent = api_config.get("open_subtitles_user_agent")
@@ -44,23 +48,23 @@ class OpenSubtitlesDownloader:
         self.client = OpenSubtitles(open_subtitles_user_agent, open_subtitles_api_key)
         self.client.login(open_subtitles_username, open_subtitles_password)
 
-        self.subtitle_dir = series_dir / ".mkv-episode-matcher" / "subtitles"
-        self.series_name = series_name
+        self.subtitle_dir = self.series.dot_dir / "subtitles"
 
     def download(self, episode: Episode):
-        console.print(f"Preparing to download series: {self.series_name} - {episode.short_str()}...")
+        console.print(f"Preparing to download series: {self.series.name} - {episode.short_str()}...")
 
         existing_subtitle = self.find_existing_subtitle(episode)
-        if existing_subtitle:
+        if existing_subtitle and not self.config.args.refresh:
             console.print(f"[bold green]\tsubtitle exists: {existing_subtitle}. Skipping download.[/bold green]")
             return
 
-        response = self.client.search(tmdb_id=episode.tmdb_id, languages="en")
+        response = self.client.search(parent_tmdb_id=self.series.detail["id"],
+                                      tmdb_id=episode.tmdb_id, languages="en")
         if len(response.data) == 0:
-            console.print(f"No subtitles found for {self.series_name} - {episode.short_str()}")
+            console.print(f"No subtitles found for {self.series.name} - {episode.short_str()}")
             return
 
-        console.print(f"[green]Found {len(response.data)} subtitles for {self.series_name} - {episode.short_str()}")
+        console.print(f"[green]Found {len(response.data)} subtitles for {self.series.name} - {episode.short_str()}")
         subtitles = sorted(response.data,
                            key=lambda subtitle: subtitle.download_count
                                                 + subtitle.new_download_count, reverse=True)
@@ -70,7 +74,7 @@ class OpenSubtitlesDownloader:
         # what's selected here.
         selected_subtitle = subtitles[0]
 
-        srt_filename = f"{self.series_name} - {episode.short_str()}.srt"
+        srt_filename = f"{self.series.name} - {episode.short_str()}.srt"
         srt_filepath = self.subtitle_dir / srt_filename
 
         srt_file = self.client.download_and_save(selected_subtitle)
@@ -141,25 +145,25 @@ class OpenSubtitlesDownloader:
         episode_num = episode.episode_number
         patterns = [
             # Standard format: "Show Name - S01E02.srt"
-            f"{self.series_name} - S{season_num:02d}E{episode_num:02d}.srt",
+            f"{self.series.name} - S{season_num:02d}E{episode_num:02d}.srt",
             # Season x Episode format: "Show Name - 1x02.srt"
-            f"{self.series_name} - {season_num}x{episode_num:02d}.srt",
+            f"{self.series.name} - {season_num}x{episode_num:02d}.srt",
             # Separate season/episode: "Show Name - Season 1 Episode 02.srt"
-            f"{self.series_name} - Season {season_num} Episode {episode_num:02d}.srt",
+            f"{self.series.name} - Season {season_num} Episode {episode_num:02d}.srt",
             # Compact format: "ShowName.S01E02.srt"
-            f"{self.series_name.replace(' ', '')}.S{season_num:02d}E{episode_num:02d}.srt",
+            f"{self.series.name.replace(' ', '')}.S{season_num:02d}E{episode_num:02d}.srt",
             # Numbered format: "Show Name 102.srt"
-            f"{self.series_name} {season_num:01d}{episode_num:02d}.srt",
+            f"{self.series.name} {season_num:01d}{episode_num:02d}.srt",
             # Dot format: "Show.Name.1x02.srt"
-            f"{self.series_name.replace(' ', '.')}.{season_num}x{episode_num:02d}.srt",
+            f"{self.series.name.replace(' ', '.')}.{season_num}x{episode_num:02d}.srt",
             # Underscore format: "Show_Name_S01E02.srt"
-            f"{self.series_name.replace(' ', '_')}_S{season_num:02d}E{episode_num:02d}.srt",
+            f"{self.series.name.replace(' ', '_')}_S{season_num:02d}E{episode_num:02d}.srt",
         ]
 
         return patterns
 
     def print_subtitles_table(self, episode: Episode, subtitles: list[opensubtitles.Subtitle]):
-        table = Table(title=f"{self.series_name} - {episode.short_str()} Available subtitles")
+        table = Table(title=f"{self.series.name} - {episode.short_str()} Available subtitles")
         table.add_column("Id", justify="right", style="cyan", no_wrap=True)
         table.add_column("Total Downloads", justify="right", style="cyan", no_wrap=True)
         table.add_column("Votes", justify="right", style="cyan", no_wrap=True)

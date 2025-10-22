@@ -1,24 +1,25 @@
+import os
 import subprocess
 import tempfile
 from pathlib import Path
-from functools import lru_cache
+from typing import ContextManager
 
-from loguru import logger
 import numpy as np
+from loguru import logger
 
-class AudioChunkExtractor:
-    def __init__(self, chunk_duration):
-        self.chunk_duration = chunk_duration
 
-        self.temp_dir = Path(tempfile.gettempdir()) / "whisper_chunks"
+class AudioChunkExtractor(ContextManager):
+    def __init__(self):
+        self.temp_dir = Path(tempfile.gettempdir()) / "mkv-episode-matcher-audio-chunks"
         self.temp_dir.mkdir(exist_ok=True)
 
-        # Cache for extracted audio chunks
-        self.audio_chunks = {}
+        self.audio_chunks = set()
 
-    @lru_cache(maxsize=100)
-    def get_video_duration(self, video_file):
-        """Get video duration with caching."""
+    @staticmethod
+    def get_video_duration(file: Path):
+        env = os.environ.copy()
+        env["TOKENIZERS_PARALLELISM"] = "false"
+
         duration = float(
             subprocess.check_output([
                 "ffprobe",
@@ -28,28 +29,25 @@ class AudioChunkExtractor:
                 "format=duration",
                 "-of",
                 "default=noprint_wrappers=1:nokey=1",
-                video_file,
-            ]).decode()
+                file,
+            ], env=env).decode()
         )
         return int(np.ceil(duration))
 
-    def extract_audio_chunk(self, mkv_file, start_time):
-        """Extract a chunk of audio from MKV file with caching."""
-        cache_key = (str(mkv_file), start_time)
+    def extract(self, file: Path, start_time: int, duration: int) -> Path:
 
-        if cache_key in self.audio_chunks:
-            return self.audio_chunks[cache_key]
+        chunk_name = file.with_suffix(f".{duration}S.AT{start_time}s.wav").name
+        chunk_path = self.temp_dir / chunk_name
 
-        chunk_path = self.temp_dir / f"chunk_{start_time}.wav"
         if not chunk_path.exists():
             cmd = [
                 "ffmpeg",
                 "-ss",
                 str(start_time),
                 "-t",
-                str(self.chunk_duration),
+                str(duration),
                 "-i",
-                mkv_file,
+                file,
                 "-vn",  # Disable video
                 "-sn",  # Disable subtitles
                 "-dn",  # Disable data streams
@@ -63,15 +61,13 @@ class AudioChunkExtractor:
                 str(chunk_path),
             ]
             subprocess.run(cmd, capture_output=True)
+            self.audio_chunks.add(chunk_path)
 
-        chunk_path_str = str(chunk_path)
-        self.audio_chunks[cache_key] = chunk_path_str
-        return chunk_path_str
+        return chunk_path
 
-    def cleanup(self):
-        # Cleanup temp files - keep this limited to only files we know we created
-        for chunk_info in self.audio_chunks.values():
+    def __exit__(self, exc_type, exc_value, traceback, /):
+        for chunk in self.audio_chunks:
             try:
-                Path(chunk_info).unlink(missing_ok=True)
+                chunk.unlink(missing_ok=True)
             except Exception as e:
-                logger.warning(f"Failed to delete temp file {chunk_info}: {e}")
+                logger.warning(f"Failed to delete temp file {chunk}: {e}")
