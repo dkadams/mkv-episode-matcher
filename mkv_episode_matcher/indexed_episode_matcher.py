@@ -1,20 +1,25 @@
 import json
-import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Tuple
 
 from guessit import guessit
 from loguru import logger
 from rich.console import Console
-from rich.table import Table
 
-from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import episode_str
-from mkv_episode_matcher.series import Series, get_series
 from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
+from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.series import Series, get_series
 from mkv_episode_matcher.text_segment_extractor import TextSegmentExtractor
 
 console = Console()
+
+@dataclass
+class MatchResult:
+    file: Path
+    matches: List[Tuple[Tuple[float, int] or float, str, str]]
+    known_episode: Tuple[int, int]
+
 
 class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
@@ -27,52 +32,21 @@ class IndexedEpisodeMatcher:
         self.extracted_text_dir.mkdir(exist_ok=True)
 
     def match(self, paths):
-        table = Table(title=f"Matches for '{self.series.name}'")
-        table.add_column("Filename")
-        table.add_column("Episode Id")
-        table.add_column("# Matches", style="bold")
-        table.add_column("#1", style="magenta")
-        table.add_column("#2")
-        table.add_column("#3")
-        table.add_column("#4")
-        table.add_column("#5")
-
-        correct = 0
-        known_episode_count = 0
         files = [path if path.is_file() else path.rglob('**/*.mkv')
                  for path in paths]
+
+        results = []
         for file in files:
             logger.info(f"Processing file: {file}")
 
             #matches = self.match_file_full(file)
             matches = self.match_intervals(file)
-            formatted_matches = [f"{episode_str(m[1], m[2])} - {m[0]}"
-                                 for m in matches]
 
             info = guessit(file.name)
-            if info:
-                known_episode_count += 1
-                actual_episode = info.get("season"), info.get("episode")
-                actual = episode_str(*actual_episode)
-                if len(matches) > 0 and actual_episode == matches[0][1:]:
-                    correct += 1
-            else:
-                actual = "-"
+            actual = info.get("season"), info.get("episode") if info else None
+            results.append(MatchResult(file, matches, actual))
 
-            if len(formatted_matches) < 5:
-                formatted_matches.extend(["-"] * (5 - len(formatted_matches)))
-            table.add_row(file.name,
-                          actual,
-                          str(len(formatted_matches)),
-                          formatted_matches[0],
-                          formatted_matches[1],
-                          formatted_matches[2],
-                          formatted_matches[3],
-                          formatted_matches[4])
-
-        console.print(table)
-        if known_episode_count > 0:
-            console.print(f"Correct: {correct}/{known_episode_count} ({correct/known_episode_count*100:.2f}%)")
+        return results
 
     def match_file_full(self, file):
         """

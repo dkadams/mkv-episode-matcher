@@ -170,7 +170,7 @@ class ChromaSubtitleIndex:
 
         return from_opensubs() or from_guessit()
 
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[float, str, str]]:
+    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[tuple[float, int], str, str]]:
         distances_by_episode = {}
         for start_ms, text in text_segments:
             result = self.intervals.query(query_texts=[text],
