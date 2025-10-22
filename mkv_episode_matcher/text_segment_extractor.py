@@ -1,5 +1,6 @@
 import random
 import math
+import time
 
 import torch
 import whisper
@@ -20,16 +21,27 @@ class TextSegmentExtractor:
         chunk_indexes = random.sample(range(chunks_per_file), count)
 
         results = []
+        total_extract_time = 0
+        total_transcribe_time = 0
         with AudioChunkExtractor() as audio_extractor:
             for index in chunk_indexes:
                 offset = index * duration
-                chunk_path = audio_extractor.extract(path, offset, duration)
 
+                before = time.time()
+                chunk_path = audio_extractor.extract(path, offset, duration)
+                total_extract_time += time.time() - before
+
+                before = time.time()
                 fp16 = self.whisper_model.device != torch.device("cpu")
                 result = whisper.transcribe(self.whisper_model, str(chunk_path),
                                             fp16=fp16)
+                total_transcribe_time += time.time() - before
+
                 results.append((index, result))
 
+        logger.info(f"Extracted {count} audio chunks "
+                    f"in {total_extract_time:.2f}s, transcribed "
+                    f"in {total_transcribe_time:.2f}s")
         return results
 
     def get_text_segments(self, path, duration=30, count=10):
