@@ -7,7 +7,8 @@ from guessit import guessit
 from loguru import logger
 from rich.console import Console
 
-from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
+from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex, \
+    ChromaSubtitleIndexReader
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.series import Series, get_series
 from mkv_episode_matcher.text_segment_extractor import TextSegmentExtractor
@@ -25,7 +26,7 @@ class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
         self.config = config
         self.series = series
-        self.index = ChromaSubtitleIndex(config, series)
+        self.index = ChromaSubtitleIndexReader(config, series)
         self.text_extractor = TextSegmentExtractor("small.en")
 
         self.extracted_text_dir = self.series.dot_dir / "extracted-text"
