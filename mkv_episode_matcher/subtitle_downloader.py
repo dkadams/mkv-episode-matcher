@@ -11,8 +11,9 @@ from rich.console import Console
 from rich.table import Table
 
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import get_specified_episodes, Episode
-from mkv_episode_matcher.series import SeriesDirectoryProcessor, Series
+from mkv_episode_matcher.episode import Episode
+from mkv_episode_matcher.series import SeriesDirectoryProcessor, Series, \
+    get_specified_episodes
 
 console = Console()
 

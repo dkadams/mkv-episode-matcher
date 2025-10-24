@@ -9,6 +9,8 @@ from loguru import logger
 from rich.console import Console
 
 from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.episode import episode_str, _get_episodes, Season, \
+    Episode, get_specs, UnknownEpisodeError
 
 console = Console()
 
@@ -52,6 +54,19 @@ class Series:
         return Series(series_dir, series_dot_dir, series_detail, series_name,
                       index_dir)
 
+    def get_episode_detail(self, episode: tuple[int, int], keys=None) -> dict[str, str | int]:
+        season_number, episode_number = episode
+        season_detail = self.detail[f"season/{season_number}"]
+        episode_detail = next((ep for ep in season_detail["episodes"]
+                               if ep["episode_number"] == episode_number), None)
+        if not episode_detail:
+            raise ValueError(f"Error: No episode detail found for "
+                             f"{self.name} "
+                             f"episode: {episode_str(*episode)}")
+
+        return {k: episode_detail[k] for k in keys
+                or ["id", "season_number", "episode_number", "runtime"]}
+
 class SeriesDirectoryProcessor:
     def __init__(self, config: Configuration):
         self.config = config
@@ -77,3 +92,50 @@ def get_series(path):
         return None
 
     return Series.from_dir(series_dir)
+
+
+def get_seasons_by_number(series: Series):
+    season_detail = [season for key, season in series.detail.items()
+                     if key.startswith("season/")]
+
+    result = {}
+    for season in season_detail:
+        season_number = season["season_number"]
+        episodes = _get_episodes(season)
+        result[season_number] = Season(season_number, episodes)
+    return result
+
+
+def get_specified_episodes(config, series:Series) -> set["Episode"]:
+    seasons_by_number = get_seasons_by_number(series)
+
+    result = set()
+    specs = get_specs(config)
+    if specs is None:
+        return {episode for season in seasons_by_number.values()
+                        for episode in season.episodes.values()}
+
+    for spec in specs:
+        season_number, episode_spec = spec
+        season = seasons_by_number.get(season_number)
+        if not season:
+            console.print(f"[bold red]Error: Season: {season_number} "
+                          f"not found for {config.args.series_name} "
+                          f"(tried to match {spec}).")
+            continue
+
+        try:
+            episodes = season.episodes_matching(episode_spec)
+            if episodes:
+                result.update(episodes)
+            else:
+                console.print(f"[orange1]Warn: No episodes matching {spec} "
+                              f"found for {series.name} "
+                              f"season: {season_number}.")
+        except UnknownEpisodeError as e:
+            console.print(f"[orange1]Error: Episode {e.episode_number} "
+                          f"for specifier {spec} "
+                          f"does not exist for {series.name} "
+                          f"season: {season_number}.")
+
+    return result

@@ -1,19 +1,18 @@
-import json
+import math
 import math
 import time
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
 
 import chromadb
 import pysubs2
-from guessit import guessit
 from loguru import logger
 from rich.console import Console
 from rich.progress import Progress
 
-from mkv_episode_matcher.episode import get_specified_episodes, episode_str
-from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.episode import episode_str, \
+    episode_from_path
+from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
 
@@ -39,14 +38,13 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 
         subtitle_files = list(self.series.dir.rglob("*.srt"))
 
-
         with Progress() as progress, ThreadPoolExecutor(max_workers=10) as executor:
             task = progress.add_task(f"Indexing {self.series.name} ({self.series.dir})",
                                      total=len(subtitle_files))
 
             def index_file(file):
                 logger.info(f"Indexing: {file}")
-                episode = self.get_episode(file)
+                episode = episode_from_path(file)
                 logger.info(f"Identified: {file} as episode: {episode}")
                 if episode in episodes:
                     logger.info(f"Indexing: {file} as episode: {episode}")
@@ -60,7 +58,7 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 
         sub_file = pysubs2.load(path, format_="srt")
 
-        metadata = self.get_metadata(episode)
+        metadata = self.series.get_episode_detail(episode)
 
         task = progress.add_task(f"Indexing {episode_str(*episode)}", total=2)
         self.index_full_episode(metadata, path, sub_file, episode)
@@ -74,19 +72,6 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
         progress.update(task, advance=1)
         progress.update(task, completed=True)
         progress.remove_task(task)
-
-    def get_metadata(self, episode: tuple[int, int]) -> dict[str, str | int]:
-        season_number, episode_number = episode
-        season_detail = self.series.detail[f"season/{season_number}"]
-        episode_detail = next((ep for ep in season_detail["episodes"]
-                               if ep["episode_number"] == episode_number), None)
-        if not episode_detail:
-            raise ValueError(f"Error: No episode detail found for "
-                             f"{self.series.name} "
-                             f"episode: {episode_str(*episode)}")
-
-        return {k: episode_detail[k] for k in ["id", "season_number",
-                                               "episode_number", "runtime"]}
 
     def index_full_episode(self, metadata: dict[str, str | int], path: Path,
         sub_file: pysubs2.SSAFile, episode: tuple[int, int]):
@@ -150,27 +135,7 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
         after = time.time()
         logger.info(f"Upserted {episode_str(*episode)} into {name} in {after - before} seconds")
 
-    @staticmethod
-    def get_episode(file: Path) -> Optional[tuple[int, int]]:
-        def from_opensubs():
-            opensubs_file = file.with_suffix(".opensubtitles")
-            if not opensubs_file.exists():
-                return None
 
-            with open(opensubs_file, "r") as json_in:
-                opensubs_data = json.load(json_in)
-
-            season_number = int(opensubs_data["season_number"])
-            episode_number = int(opensubs_data["episode_number"])
-            return season_number, episode_number
-
-        def from_guessit():
-            matches = guessit(file.name)
-            season_number = matches.get("season")
-            episode_number = matches.get("episode")
-            return season_number, episode_number
-
-        return from_opensubs() or from_guessit()
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
     def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[tuple[float, int], str, str]]:

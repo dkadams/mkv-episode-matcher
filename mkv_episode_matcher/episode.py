@@ -1,45 +1,12 @@
+import json
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
+from guessit import guessit
 from rich.console import Console
 
-from mkv_episode_matcher.series import Series
-
 console = Console()
-
-def get_specified_episodes(config, series:Series) -> set["Episode"]:
-    seasons_by_number = get_seasons_by_number(series)
-
-    result = set()
-    specs = get_specs(config)
-    if specs is None:
-        return {episode for season in seasons_by_number.values()
-                        for episode in season.episodes.values()}
-
-    for spec in specs:
-        season_number, episode_spec = spec
-        season = seasons_by_number.get(season_number)
-        if not season:
-            console.print(f"[bold red]Error: Season: {season_number} "
-                          f"not found for {config.args.series_name} "
-                          f"(tried to match {spec}).")
-            continue
-
-        try:
-            episodes = season.episodes_matching(episode_spec)
-            if episodes:
-                result.update(episodes)
-            else:
-                console.print(f"[orange1]Warn: No episodes matching {spec} "
-                              f"found for {series.name} "
-                              f"season: {season_number}.")
-        except UnknownEpisodeError as e:
-            console.print(f"[orange1]Error: Episode {e.episode_number} "
-                          f"for specifier {spec} "
-                          f"does not exist for {series.name} "
-                          f"season: {season_number}.")
-
-    return result
-
 
 def get_specs(config):
     # Normalize filtering to a list of episode specifiers
@@ -50,17 +17,6 @@ def get_specs(config):
                 for season_number in config.args.season_numbers]
     else:
         return None
-
-def get_seasons_by_number(series: Series):
-    season_detail = [season for key, season in series.detail.items()
-                     if key.startswith("season/")]
-
-    result = {}
-    for season in season_detail:
-        season_number = season["season_number"]
-        episodes = _get_episodes(season)
-        result[season_number] = Season(season_number, episodes)
-    return result
 
 def _get_episodes(season_detail):
     result = {}
@@ -90,6 +46,27 @@ def episode_tuple(episode: str) -> tuple[int, int]:
     episode_number = int(parts[1])
 
     return season_number, episode_number
+
+def episode_from_path(file: Path) -> Optional[tuple[int, int]]:
+    def from_opensubs():
+        opensubs_file = file.with_suffix(".opensubtitles")
+        if not opensubs_file.exists():
+            return None
+
+        with open(opensubs_file, "r") as json_in:
+            opensubs_data = json.load(json_in)
+
+        season_number = int(opensubs_data["season_number"])
+        episode_number = int(opensubs_data["episode_number"])
+        return season_number, episode_number
+
+    def from_guessit():
+        matches = guessit(file.name)
+        season_number = matches.get("season")
+        episode_number = matches.get("episode")
+        return season_number, episode_number
+
+    return from_opensubs() or from_guessit()
 
 @dataclass(eq=True, frozen=True)
 class Season:

@@ -2,20 +2,18 @@ import json
 import math
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 import pysubs2
 from annoy import AnnoyIndex
-from guessit import guessit
 from loguru import logger
 from rich.console import Console
 from rich.progress import Progress
 from sentence_transformers import SentenceTransformer
 
-from mkv_episode_matcher.episode import get_specified_episodes, episode_str, \
-    episode_tuple
-from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.episode import episode_str, \
+    episode_tuple, episode_from_path
+from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
 
@@ -61,7 +59,7 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
 
             def extract_embeddings(file):
                 logger.info(f"Indexing: {file}")
-                episode = self.get_episode(file)
+                episode = episode_from_path(file)
                 logger.info(f"Identified: {file} as episode: {episode}")
                 if episode in episodes:
                     logger.info(f"Indexing: {file} as episode: {episode}")
@@ -89,7 +87,7 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
         logger.info(f"Indexing episode: {self.series.name} episode: {epi_str}")
 
         sub_file = pysubs2.load(path, format_="srt")
-        metadata = self.get_metadata(episode)
+        metadata = self.series.get_episode_detail(episode)
 
         # TODO maybe this should use the runtime from the subtitle file?
         interval_count = math.ceil(metadata["runtime"] * 60 / 30)
@@ -142,41 +140,6 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
         index.build(50, n_jobs=1)
         index.save(str(self.index_dir / f"{interval}.ann"))
         index.unload()
-
-    def get_metadata(self, episode: tuple[int, int]) -> dict[str, str | int]:
-        season_number, episode_number = episode
-        season_detail = self.series.detail[f"season/{season_number}"]
-        episode_detail = next((ep for ep in season_detail["episodes"]
-                               if ep["episode_number"] == episode_number), None)
-        if not episode_detail:
-            raise ValueError(f"Error: No episode detail found for "
-                             f"{self.series.name} "
-                             f"episode: {episode_str(*episode)}")
-
-        return {k: episode_detail[k] for k in ["id", "season_number",
-                                               "episode_number", "runtime"]}
-
-    @staticmethod
-    def get_episode(file: Path) -> Optional[tuple[int, int]]:
-        def from_opensubs():
-            opensubs_file = file.with_suffix(".opensubtitles")
-            if not opensubs_file.exists():
-                return None
-
-            with open(opensubs_file, "r") as json_in:
-                opensubs_data = json.load(json_in)
-
-            season_number = int(opensubs_data["season_number"])
-            episode_number = int(opensubs_data["episode_number"])
-            return season_number, episode_number
-
-        def from_guessit():
-            matches = guessit(file.name)
-            season_number = matches.get("season")
-            episode_number = matches.get("episode")
-            return season_number, episode_number
-
-        return from_opensubs() or from_guessit()
 
 class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
     def __init__(self, config, series: Series):
@@ -243,7 +206,3 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                                for id, (season, episode) in data.items()}
 
         return index_directory, index
-
-def chunked(iterable, size):
-    for i in range(0, len(iterable), size):
-        yield iterable[i:i + size]
