@@ -48,7 +48,7 @@ class Series:
             with open(settings_file, 'r') as file:
                 settings = json.load(file)
 
-        index_dir = settings.get("index-dir") or series_dot_dir / "indexes.chromadb"
+        index_dir = Path(settings.get("index-dir")) or series_dot_dir / "indexes"
         return Series(series_dir, series_dot_dir, series_detail, series_name,
                       index_dir)
 

@@ -80,8 +80,16 @@ class Episode:
     def short_str(self):
         return episode_str(self.season_number, self.episode_number)
 
-def episode_str(season_number, episode_number):
+def episode_str(season_number, episode_number) -> str:
     return f"S{season_number:02d}E{episode_number:02d}"
+
+def episode_tuple(episode: str) -> tuple[int, int]:
+    parts = episode.split('S')[1].split('E')
+
+    season_number = int(parts[0])
+    episode_number = int(parts[1])
+
+    return season_number, episode_number
 
 @dataclass(eq=True, frozen=True)
 class Season:

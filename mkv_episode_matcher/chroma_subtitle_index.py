@@ -22,7 +22,8 @@ class ChromaSubtitleIndex:
         self.config = config
         self.series = series
 
-        self.chromadb = chromadb.PersistentClient(path=series.index_dir)
+        self.index_dir = series.index_dir / "chroma.index"
+        self.chromadb = chromadb.PersistentClient(path=self.index_dir)
 
         self.full_episodes = self.chromadb.get_or_create_collection(name="full-episodes",
                                                                     metadata={"hnsw:space": "cosine"})
@@ -174,7 +175,8 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
     def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[tuple[float, int], str, str]]:
         distances_by_episode = {}
-        for start_ms, text in text_segments:
+        for interval, text in text_segments:
+            start_ms = interval * 30 * 1000
             result = self.intervals.query(query_texts=[text],
                                           where={"start_ms": start_ms},
                                           n_results=5,

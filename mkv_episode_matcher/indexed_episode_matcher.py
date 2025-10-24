@@ -7,6 +7,7 @@ from guessit import guessit
 from loguru import logger
 from rich.console import Console
 
+from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndexReader
 from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex, \
     ChromaSubtitleIndexReader
 from mkv_episode_matcher.config import Configuration
@@ -26,7 +27,14 @@ class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
         self.config = config
         self.series = series
-        self.index = ChromaSubtitleIndexReader(config, series)
+
+        if config.args.index_format == "chroma":
+            self.index = ChromaSubtitleIndexReader(config, series)
+        elif config.args.index_format == "annoy":
+            self.index = AnnoySubtitleIndexReader(config, series)
+        else:
+            raise Exception(f"Unknown index format: {config.args.index_format}")
+
         self.text_extractor = TextSegmentExtractor("small.en")
 
         self.extracted_text_dir = self.series.dot_dir / "extracted-text"
@@ -67,10 +75,7 @@ class IndexedEpisodeMatcher:
         :return: (distance, season, episode) tuples
         """
         text_segments = self.extract_text_segments(file)
-
-        text_intervals = [(index * 30 * 1000, text)
-                          for index, text in text_segments]
-        return self.index.query_intervals(text_intervals)
+        return self.index.query_intervals(text_segments)
 
 
     def extract_text_segments(self, file) -> List[Tuple[int, str]]:

@@ -17,15 +17,18 @@ def build_args_parser():
     config_parser = get_config_parser()
     series_dir_parser = get_series_dir_parser()
     episode_parser = get_episode_parser()
+    index_parser = get_index_parser()
 
     subparsers = parser.add_subparsers(required=True)
 
     add_config_parser(subparsers, config_parser)
     add_init_series(subparsers, config_parser, series_dir_parser)
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
-    add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser)
-    add_match(subparsers, config_parser)
-    add_match_debug(subparsers, config_parser)
+
+    add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser, index_parser)
+    add_match(subparsers, config_parser, index_parser)
+
+    add_match_debug(subparsers, config_parser, index_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -99,18 +102,20 @@ def add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
                                    help="Download subtitles even if they already exist")
     fetch_subs_parser.set_defaults(func=download_subtitles)
 
-def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser):
+def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
+    index_parser):
     index_subs_parser = subparsers.add_parser("index-subs",
                                               parents=[config_parser,
                                                        series_dir_parser,
-                                                       episode_parser],
+                                                       episode_parser,
+                                                       index_parser],
                                               help="Index subtitles for a series")
     index_subs_parser.set_defaults(func=index_subtitles)
 
 
-def add_match(subparsers, config_parser):
+def add_match(subparsers, config_parser, index_parser):
     match_parser = subparsers.add_parser("match",
-                                         parents=[config_parser],
+                                         parents=[config_parser, index_parser],
                                          help="Match episodes of a series")
 
     match_parser.add_argument('video_files',
@@ -124,9 +129,9 @@ def add_match(subparsers, config_parser):
     match_parser.set_defaults(func=match_episodes)
 
 
-def add_match_debug(subparsers, config_parser):
+def add_match_debug(subparsers, config_parser, index_parser):
         parser = subparsers.add_parser("match-debug",
-                                       parents=[config_parser],
+                                       parents=[config_parser, index_parser],
                                        help="Debug matching logic")
 
         parser.add_argument('extract_file',
@@ -189,3 +194,18 @@ def get_episode_parser():
     )
 
     return episode_parser
+
+def get_index_parser():
+    parser = argparse.ArgumentParser(add_help=False)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--chroma", dest="index_format",
+        action="store_const", const="chroma",
+        help="Use chroma for indexes.")
+    group.add_argument(
+        "--annoy", dest="index_format",
+        action="store_const", const="annoy",
+        help="Use Annoy for indexes.")
+
+    parser.set_defaults(index_format="annoy")
+    return parser
