@@ -8,9 +8,19 @@ from loguru import logger
 
 from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
 
-class TextSegmentExtractor:
+
+class WhisperTranscriber:
     def __init__(self, model_name):
-        self.whisper_model = whisper.load_model(model_name)
+        self.model = whisper.load_model(model_name)
+
+    def transcribe(self, audio_path):
+        fp16 = self.model.device != torch.device("cpu")
+        return whisper.transcribe(self.model, str(audio_path), fp16=fp16)
+
+
+class TextSegmentExtractor:
+    def __init__(self, model_name, transcriber=None):
+        self.transcriber = transcriber or WhisperTranscriber(model_name)
 
     def get_random_segments(self, path, duration, count):
         total_duration = AudioChunkExtractor.get_video_duration(path)
@@ -32,9 +42,7 @@ class TextSegmentExtractor:
                 total_extract_time += time.time() - before
 
                 before = time.time()
-                fp16 = self.whisper_model.device != torch.device("cpu")
-                result = whisper.transcribe(self.whisper_model, str(chunk_path),
-                                            fp16=fp16)
+                result = self.transcriber.transcribe(chunk_path)
                 total_transcribe_time += time.time() - before
 
                 results.append((index, result))
