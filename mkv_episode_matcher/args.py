@@ -206,6 +206,10 @@ def get_index_parser():
         "--annoy", dest="index_format",
         action="store_const", const="annoy",
         help="Use Annoy for indexes.")
+    group.add_argument(
+        "--hnswlib", dest="index_format",
+        action="store_const", const="hnswlib",
+        help="Use hnswlib for indexes.")
 
     parser.set_defaults(index_format="annoy")
     return parser

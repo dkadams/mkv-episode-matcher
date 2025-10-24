@@ -8,9 +8,12 @@ from loguru import logger
 from rich.console import Console
 
 from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndexReader
-from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex, \
-    ChromaSubtitleIndexReader
+from mkv_episode_matcher.chroma_subtitle_index import (
+    ChromaSubtitleIndex,
+    ChromaSubtitleIndexReader,
+)
 from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndexReader
 from mkv_episode_matcher.series import Series, get_series
 from mkv_episode_matcher.text_segment_extractor import TextSegmentExtractor
 
@@ -32,6 +35,8 @@ class IndexedEpisodeMatcher:
             self.index = ChromaSubtitleIndexReader(config, series)
         elif config.args.index_format == "annoy":
             self.index = AnnoySubtitleIndexReader(config, series)
+        elif config.args.index_format == "hnswlib":
+            self.index = HnswlibSubtitleIndexReader(config, series)
         else:
             raise Exception(f"Unknown index format: {config.args.index_format}")
 
