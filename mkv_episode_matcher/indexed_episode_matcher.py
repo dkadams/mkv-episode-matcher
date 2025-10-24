@@ -53,7 +53,6 @@ class IndexedEpisodeMatcher:
         for file in files:
             logger.info(f"Processing file: {file}")
 
-            #matches = self.match_file_full(file)
             matches = self.match_intervals(file)
 
             info = guessit(file.name)
@@ -61,16 +60,6 @@ class IndexedEpisodeMatcher:
             results.append(MatchResult(file, matches, actual))
 
         return results
-
-    def match_file_full(self, file):
-        """
-        match against all the extracted text as a single query
-        :param file: the file to match
-        :return: (distance, season, episode) tuples
-        """
-        text_segments = self.extract_text_segments(file)
-        text = " ".join([text for _, text in text_segments])
-        return self.index.query_full_text(text)
 
     def match_intervals(self, file):
         """
@@ -81,7 +70,6 @@ class IndexedEpisodeMatcher:
         """
         text_segments = self.extract_text_segments(file)
         return self.index.query_intervals(text_segments)
-
 
     def extract_text_segments(self, file) -> List[Tuple[int, str]]:
         duration = 30

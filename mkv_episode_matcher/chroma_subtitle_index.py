@@ -1,8 +1,5 @@
 import math
-import math
-import time
 from concurrent.futures.thread import ThreadPoolExecutor
-from pathlib import Path
 
 import chromadb
 import pysubs2
@@ -24,10 +21,6 @@ class ChromaSubtitleIndex:
         self.index_dir = series.index_dir / "chroma.index"
         self.chromadb = chromadb.PersistentClient(path=self.index_dir)
 
-        self.full_episodes = self.chromadb.get_or_create_collection(name="full-episodes",
-                                                                    metadata={"hnsw:space": "cosine"})
-        self.segments = self.chromadb.get_or_create_collection(name="segments",
-                                                               metadata={"hnsw:space": "cosine"})
         self.intervals = self.chromadb.get_or_create_collection(name="intervals",
                                                                metadata={"hnsw:space": "cosine"})
 
@@ -48,68 +41,20 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
                 logger.info(f"Identified: {file} as episode: {episode}")
                 if episode in episodes:
                     logger.info(f"Indexing: {file} as episode: {episode}")
-                    self.index_episode(file, episode, progress)
+                    self.index_episode(file, episode)
                 progress.update(task, advance=1)
 
             list(executor.map(index_file, subtitle_files))
 
-    def index_episode(self, path, episode: tuple[int, int], progress: Progress):
+    def index_episode(self, path, episode: tuple[int, int]):
         logger.info(f"Indexing episode: {self.series.name} episode: {episode_str(*episode)}")
 
         sub_file = pysubs2.load(path, format_="srt")
 
         metadata = self.series.get_episode_detail(episode)
-
-        task = progress.add_task(f"Indexing {episode_str(*episode)}", total=2)
-        self.index_full_episode(metadata, path, sub_file, episode)
-        progress.update(task, advance=1)
-
-        def update_progress(advance: float):
-            progress.update(task, advance=advance)
-        #self.index_segments(metadata, path, sub_file, episode, update_progress)
-
-        self.index_intervals(metadata, path, sub_file, episode)
-        progress.update(task, advance=1)
-        progress.update(task, completed=True)
-        progress.remove_task(task)
-
-    def index_full_episode(self, metadata: dict[str, str | int], path: Path,
-        sub_file: pysubs2.SSAFile, episode: tuple[int, int]):
-        full_episode = "\n".join([line.plaintext for line in sub_file])
-
-        self.upsert("full", self.full_episodes, episode,
-                    ids=[str(path)], documents=[full_episode], metadatas=[metadata])
-
-
-    def index_segments(self, metadata: dict[str, str | int], path: Path,
-        sub_file: pysubs2.SSAFile, episode: tuple[int, int], upgdate_progress):
-        ids = []
-        documents = []
-        metadatas = []
-        for sub in sub_file:
-            ids.append(f"{str(path)}:{sub.start}:{sub.end}")
-            documents.append(sub.plaintext)
-            sub_metadata = metadata.copy()
-            sub_metadata["start_ms"] = sub.start
-            sub_metadata["end_ms"] = sub.end
-            metadatas.append(sub_metadata)
-
-        chunk_size = 20
-        chunk_count = len(ids) / chunk_size
-        for chunk_number, (id_chunk, doc_chunk, meta_chunk) in enumerate(zip(
-                chunked(ids, chunk_size),
-                chunked(documents, chunk_size),
-                chunked(metadatas, chunk_size))):
-            self.upsert(f"segments[chunk#{chunk_number}]", self.segments, episode,
-                        ids=id_chunk, documents=doc_chunk, metadatas=meta_chunk)
-            upgdate_progress(1 / chunk_count)
-
-    def index_intervals(self, metadata: dict[str, str | int], path: Path,
-            sub_file: pysubs2.SSAFile, episode: tuple[int, int]):
         interval_count = math.ceil(metadata["runtime"] * 60 / 30)
         intervals = (range(i * 30 * 1000, (i + 1) * 30 * 1000)
                      for i in range(interval_count))
-
         ids = []
         documents = []
         metadatas = []
@@ -123,18 +68,7 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
             sub_metadata["start_ms"] = interval.start
             sub_metadata["end_ms"] = interval.stop
             metadatas.append(sub_metadata)
-
-        self.upsert(f"intervals", self.intervals, episode,
-                    ids=ids, documents=documents, metadatas=metadatas)
-
-    @staticmethod
-    def upsert(name, collection, episode, ids, documents, metadatas):
-        logger.info(f"Upserting {episode_str(*episode)} into {name}")
-        before = time.time()
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-        after = time.time()
-        logger.info(f"Upserted {episode_str(*episode)} into {name} in {after - before} seconds")
-
+        self.intervals.upsert(ids=ids, documents=documents, metadatas=metadatas)
 
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
@@ -165,16 +99,3 @@ class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
 
         return [(distances_by_episode[ep_id], ep_id[0], ep_id[1])
                 for ep_id in ordered_ep_id[:5]] # only return the top 5 results
-
-    def query_full_text(self, text: str) -> list[tuple[float, str, str]]:
-        result = self.full_episodes.query(query_texts=[text],
-                                          n_results=5,
-                                          include=["metadatas", "distances"])
-
-        return [(distance, md["season_number"], md["episode_number"])
-                for md, distance
-                in zip(result["metadatas"][0], result["distances"][0])]
-
-def chunked(iterable, size):
-    for i in range(0, len(iterable), size):
-        yield iterable[i:i + size]
