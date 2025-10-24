@@ -1,7 +1,10 @@
 import json
+import multiprocessing
+import os
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 from guessit import guessit
 from loguru import logger
@@ -18,6 +21,37 @@ from mkv_episode_matcher.series import Series, get_series
 from mkv_episode_matcher.text_segment_extractor import TextSegmentExtractor
 
 console = Console()
+
+_PROCESS_TEXT_EXTRACTOR = None
+
+
+def _init_text_extractor_worker(model_name: str):
+    """Initializer for the process pool so Whisper loads only in child processes."""
+    global _PROCESS_TEXT_EXTRACTOR
+    if _PROCESS_TEXT_EXTRACTOR is None:
+        _PROCESS_TEXT_EXTRACTOR = TextSegmentExtractor(model_name)
+
+
+def _extract_text_segments_worker(
+    file_path_str: str,
+    duration: int,
+    count: int,
+    cache_dir_str: str,
+):
+    """Extract text segments for a single file inside a worker process."""
+    file_path = Path(file_path_str)
+    cache_dir = Path(cache_dir_str)
+    cache_dir.mkdir(exist_ok=True)
+    cache_file = cache_dir / file_path.with_suffix(".json").name
+
+    if cache_file.exists():
+        with open(cache_file, "r") as json_in:
+            return json.load(json_in)
+
+    segments = _PROCESS_TEXT_EXTRACTOR.get_text_segments(file_path, duration, count)
+    with open(cache_file, "w") as json_out:
+        json.dump(segments, json_out)
+    return segments
 
 @dataclass
 class MatchResult:
@@ -40,21 +74,39 @@ class IndexedEpisodeMatcher:
         else:
             raise Exception(f"Unknown index format: {config.args.index_format}")
 
-        self.text_extractor = TextSegmentExtractor("small.en")
+        self.text_extractor_model = "small.en"
+        self.segment_duration = 30
+        self.segment_count = 10
 
         self.extracted_text_dir = self.series.dot_dir / "extracted-text"
         self.extracted_text_dir.mkdir(exist_ok=True)
 
     def match(self, paths):
-        files = [path if path.is_file() else path.rglob('**/*.mkv')
-                 for path in paths]
+        files = list(self._collect_files(paths))
+        if not files:
+            return []
 
-        results = []
         for file in files:
             logger.info(f"Processing file: {file}")
 
-            matches = self.match_intervals(file)
+        text_segments_map = self._ensure_text_segments(files)
 
+        query_workers = self._determine_thread_workers(len(files))
+        query_results: Dict[
+            Path, List[Tuple[Tuple[float, int] or float, str, str]]
+        ] = {}
+        with ThreadPoolExecutor(max_workers=query_workers) as executor:
+            future_to_file = {
+                executor.submit(self.index.query_intervals, text_segments_map[file]): file
+                for file in files
+            }
+            for future in as_completed(future_to_file):
+                file = future_to_file[future]
+                query_results[file] = future.result()
+
+        results = []
+        for file in files:
+            matches = query_results[file]
             info = guessit(file.name)
             actual = info.get("season"), info.get("episode") if info else None
             results.append(MatchResult(file, matches, actual))
@@ -72,22 +124,70 @@ class IndexedEpisodeMatcher:
         return self.index.query_intervals(text_segments)
 
     def extract_text_segments(self, file) -> List[Tuple[int, str]]:
-        duration = 30
-        count = 10
+        return self._ensure_text_segments([file])[file]
 
-        cache_dir = self.extracted_text_dir / f"dur{duration}s_count{count}"
-        cache_dir.mkdir(exist_ok=True)
-        cache_file = cache_dir / file.with_suffix(".json").name
+    def _collect_files(self, paths: Iterable[Path]) -> Iterable[Path]:
+        for path in paths:
+            if path.is_file():
+                yield path
+            else:
+                yield from (
+                    candidate for candidate in path.rglob("*.mkv") if candidate.is_file()
+                )
 
-        if cache_file.exists():
-            with open(cache_file, "r") as json_in:
-                text_segments = json.load(json_in)
-        else:
-            text_segments = self.text_extractor.get_text_segments(file, duration, count)
-            with open(cache_file, "w") as json_out:
-                json_out.write(json.dumps(text_segments))
+    def _ensure_text_segments(self, files: List[Path]) -> Dict[Path, List[Tuple[int, str]]]:
+        if not files:
+            return {}
+
+        cache_dir = self._ensure_cache_dir()
+        text_segments: Dict[Path, List[Tuple[int, str]]] = {}
+        missing_files: List[Path] = []
+
+        for file in files:
+            cache_file = cache_dir / file.with_suffix(".json").name
+            if cache_file.exists():
+                with open(cache_file, "r") as json_in:
+                    text_segments[file] = json.load(json_in)
+            else:
+                missing_files.append(file)
+
+        if missing_files:
+            process_workers = self._determine_process_workers(len(missing_files))
+            ctx = multiprocessing.get_context("spawn")
+            with ProcessPoolExecutor(
+                max_workers=process_workers,
+                initializer=_init_text_extractor_worker,
+                initargs=(self.text_extractor_model,),
+                mp_context=ctx,
+            ) as executor:
+                future_to_file = {
+                    executor.submit(
+                        _extract_text_segments_worker,
+                        str(file),
+                        self.segment_duration,
+                        self.segment_count,
+                        str(cache_dir),
+                    ): file
+                    for file in missing_files
+                }
+                for future in as_completed(future_to_file):
+                    file = future_to_file[future]
+                    text_segments[file] = future.result()
 
         return text_segments
+
+    def _ensure_cache_dir(self) -> Path:
+        cache_dir = self.extracted_text_dir / f"dur{self.segment_duration}s_count{self.segment_count}"
+        cache_dir.mkdir(exist_ok=True)
+        return cache_dir
+
+    def _determine_process_workers(self, task_count: int) -> int:
+        cpu_count = os.cpu_count() or 1
+        return max(1, min(task_count, cpu_count))
+
+    def _determine_thread_workers(self, task_count: int) -> int:
+        cpu_count = os.cpu_count() or 1
+        return max(1, min(task_count, cpu_count))
 
 def match_debug(config: Configuration):
     extract_file = Path(config.args.extract_file)
