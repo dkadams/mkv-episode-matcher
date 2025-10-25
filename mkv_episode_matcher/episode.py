@@ -1,10 +1,11 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple, List
 
 from guessit import guessit
 from rich.console import Console
+from loguru import logger
 
 console = Console()
 
@@ -36,8 +37,14 @@ class Episode:
     def short_str(self):
         return episode_str(self.season_number, self.episode_number)
 
-def episode_str(season_number, episode_number) -> str:
-    return f"S{season_number:02d}E{episode_number:02d}"
+def episode_str(season_number: int | str,
+                episode_number: int | str | Tuple[int, int] | List[int]) -> str:
+    if isinstance(episode_number, tuple) or isinstance(episode_number, list):
+        separator = "-" if len(episode_number) == 2 else ","
+        ep_str = separator.join(f"{int(e):02d}" for e in episode_number)
+    else:
+        ep_str = f"{int(episode_number):02d}"
+    return f"S{int(season_number):02d}E{ep_str}"
 
 def episode_tuple(episode: str) -> tuple[int, int]:
     parts = episode.split('S')[1].split('E')
