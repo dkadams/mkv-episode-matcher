@@ -8,8 +8,11 @@ from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
 from mkv_episode_matcher.subtitle_index import index_subtitles
-from mkv_episode_matcher.text_segment_extractor import WhisperTranscriber, \
-    FasterWhisperTranscriber
+from mkv_episode_matcher.text_segment_extractor import (
+    WhisperTranscriber,
+    FasterWhisperTranscriber,
+    WhispercppCliTranscriber,
+)
 
 
 def build_args_parser():
@@ -142,6 +145,10 @@ def add_match(subparsers, config_parser, index_parser):
         "--faster-whisper", dest="transcriber",
         action="store_const", const=FasterWhisperTranscriber,
         help="Use Faster Whisper for transcription.")
+    xscribe_model_group.add_argument(
+        "--whispercpp-cli", dest="transcriber",
+        action="store_const", const=WhispercppCliTranscriber,
+        help="Use whisper.cpp's CLI for transcription.")
 
     match_parser.set_defaults(func=match_episodes, transcriber=FasterWhisperTranscriber)
 
