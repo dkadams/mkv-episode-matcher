@@ -52,7 +52,7 @@ def display_results(series: Series, results: List[MatchResult]):
             if correct_match:
                 correct += 1
         else:
-            correct_match = False
+            correct_match = None
             actual = "-"
 
         def prefix(match):
@@ -75,9 +75,16 @@ def display_results(series: Series, results: List[MatchResult]):
         if len(formatted_matches) < 5:
             formatted_matches.extend(["-"] * (5 - len(formatted_matches)))
 
+        correct_marker = ""
+        match correct_match:
+            case True:
+                correct_marker = "[bold green]*"
+            case False:
+                correct_marker = "[bold red]X"
+
         table.add_row(result.file.name,
                       actual,
-                      "[bold green]*" if correct_match else "",
+                      correct_marker,
                       str(len(result.matches)),
                       formatted_matches[0],
                       formatted_matches[1],
