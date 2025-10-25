@@ -186,8 +186,21 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                 continue
 
             directory, index = index_entry
+
+            # Avoid asking for more results than are available. Doing so causes
+            # hnswlib to throw this RuntimeError:
+            #   Cannot return the results in a contiguous 2D array. Probably
+            #       ef or M is too small
+            neighbor_count = min(5, len(directory))
+            if neighbor_count == 0:
+                logger.warning(
+                    f"Index metadata empty for interval: {interval}, skipping query"
+                )
+                continue
+
             query = self.model.encode_query(text).astype(np.float32)
-            labels, distances = index.knn_query(query, k=5)
+            labels, distances = index.knn_query(query, k=neighbor_count,
+                                                num_threads=1, filter=None)
             ids = labels[0]
             dists = distances[0]
 
