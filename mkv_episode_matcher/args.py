@@ -155,7 +155,7 @@ def add_match(subparsers, config_parser, index_parser):
         action="store_const", const=WhisperKitCliTranscriber,
         help="Use WhisperKit's CLI for transcription.")
 
-    match_parser.set_defaults(func=match_episodes, transcriber=FasterWhisperTranscriber)
+    match_parser.set_defaults(func=match_episodes, transcriber=WhispercppCliTranscriber)
 
 def add_match_debug(subparsers, config_parser, index_parser):
         parser = subparsers.add_parser("match-debug",
