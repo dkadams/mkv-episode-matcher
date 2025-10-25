@@ -12,6 +12,7 @@ from mkv_episode_matcher.text_segment_extractor import (
     WhisperTranscriber,
     FasterWhisperTranscriber,
     WhispercppCliTranscriber,
+    WhisperKitCliTranscriber,
 )
 
 
@@ -149,6 +150,10 @@ def add_match(subparsers, config_parser, index_parser):
         "--whispercpp-cli", dest="transcriber",
         action="store_const", const=WhispercppCliTranscriber,
         help="Use whisper.cpp's CLI for transcription.")
+    xscribe_model_group.add_argument(
+        "--whisperkit-cli", dest="transcriber",
+        action="store_const", const=WhisperKitCliTranscriber,
+        help="Use WhisperKit's CLI for transcription.")
 
     match_parser.set_defaults(func=match_episodes, transcriber=FasterWhisperTranscriber)
 

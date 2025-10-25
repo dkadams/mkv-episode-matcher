@@ -78,3 +78,23 @@ def test_get_text_segments_returns_indexed_text(monkeypatch):
         (1, "chunk_30"),
         (2, "chunk_60"),
     ]
+
+
+def test_whisperkit_extract_text_prefers_segments():
+    payload = {
+        "files": [
+            {
+                "path": "audio.wav",
+                "text": "short text",
+                "segments": [
+                    {"text": "Hello"},
+                    {"text": "from"},
+                    {"text": "WhisperKit"},
+                ],
+            }
+        ]
+    }
+
+    text = tse.WhisperKitCliTranscriber._extract_text(payload)
+
+    assert text == "Hello from WhisperKit"

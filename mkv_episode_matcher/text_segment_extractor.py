@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import random
@@ -33,14 +34,14 @@ class FasterWhisperTranscriber:
         return " ".join(text_segments)
 
 class WhispercppCliTranscriber:
-    """Thin wrapper around whisper.cpp's whisper-cli binary."""
+    """Thin wrapper around whisper.cpp's whispercpp-cli binary."""
 
     def __init__(self, model_name, executable="whisper-cli"):
         self.executable = executable
         self.model_path = self._resolve_model_path(Path(model_name).expanduser())
         if not Path(self.model_path).exists():
             logger.warning(
-                "whisper-cli model file '%s' does not exist; transcription will likely fail",
+                "whispercpp-cli model file '%s' does not exist; transcription will likely fail",
                 self.model_path,
             )
 
@@ -85,7 +86,7 @@ class WhispercppCliTranscriber:
         return str(fallback)
 
     def transcribe(self, audio_path: Path):
-        logger.info(f"Transcribing {audio_path} with whisper-cli")
+        logger.info(f"Transcribing {audio_path} with whispercpp-cli")
         with tempfile.TemporaryDirectory() as tmpdir:
             output_base = Path(tmpdir) / "whispercpp_transcription"
             cmd = [
@@ -102,21 +103,64 @@ class WhispercppCliTranscriber:
                 result = subprocess.run(cmd, capture_output=True, text=True,
                                         check=False)
             except FileNotFoundError:
-                logger.error(f"whisper-cli executable '{self.executable}' not found")
+                logger.error(f"whispercpp-cli executable '{self.executable}' not found")
                 return None
 
             if result.returncode != 0:
-                logger.error(f"whisper-cli failed for {audio_path} "
+                logger.error(f"whispercpp-cli failed for {audio_path} "
                              f"(exit {result.returncode}): {result.stderr.strip()}")
                 return None
 
             transcript_file = Path(f"{output_base}.txt")
             if not transcript_file.exists():
-                logger.error(f"whisper-cli did not produce expected transcript file {transcript_file}")
+                logger.error(f"whispercpp-cli did not produce expected transcript file {transcript_file}")
                 return None
 
             text = transcript_file.read_text(encoding="utf-8").strip()
             return text or None
+
+class WhisperKitCliTranscriber:
+    """Adapter for the Swift whisperkit-cli binary."""
+
+    def __init__(self, model_name: str, executable: str = "whisperkit-cli"):
+        self.executable = executable
+        self.model_arg = None
+        if model_name:
+            expanded = Path(model_name).expanduser()
+            if expanded.exists():
+                self.model_arg = ("--model-path", str(expanded))
+            else:
+                self.model_arg = ("--model", model_name)
+
+    def transcribe(self, audio_path: Path):
+        logger.info(f"Transcribing {audio_path} with whisperkit-cli")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_dir = Path(tmpdir)
+            cmd = [
+                self.executable,
+                "transcribe",
+                "--audio-path",
+                str(audio_path),
+                "--report",
+                "--report-path",
+                str(report_dir),
+                "--without-timestamps",
+            ]
+            if self.model_arg:
+                cmd.extend(self.model_arg)
+
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            except FileNotFoundError:
+                logger.error(f"whisperkit-cli executable '{self.executable}' not found")
+                return None
+
+            if result.returncode != 0:
+                stderr = result.stderr.strip()
+                logger.error(f"whisperkit-cli failed for {audio_path} (exit {result.returncode}): {stderr}")
+                return None
+
+            return result.stdout.strip()
 
 class TextSegmentExtractor:
     def __init__(self, model_name, transcriber):
