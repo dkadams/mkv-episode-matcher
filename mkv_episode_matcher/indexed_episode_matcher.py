@@ -1,13 +1,12 @@
 import json
 import multiprocessing
-import os
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, \
+    as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
 
 from guessit import guessit
-from loguru import logger
 from rich.console import Console
 
 from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndexReader
@@ -16,49 +15,19 @@ from mkv_episode_matcher.chroma_subtitle_index import (
     ChromaSubtitleIndexReader,
 )
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndexReader
+from mkv_episode_matcher.extract_text_segments_worker import \
+    _init_text_extractor_worker, _extract_text_segments_worker
+from mkv_episode_matcher.hnswlib_subtitle_index import \
+    HnswlibSubtitleIndexReader
 from mkv_episode_matcher.series import Series, get_series
-from mkv_episode_matcher.text_segment_extractor import TextSegmentExtractor
 
 console = Console()
-
-_PROCESS_TEXT_EXTRACTOR = None
-
-
-def _init_text_extractor_worker(model_name: str):
-    """Initializer for the process pool so Whisper loads only in child processes."""
-    global _PROCESS_TEXT_EXTRACTOR
-    if _PROCESS_TEXT_EXTRACTOR is None:
-        _PROCESS_TEXT_EXTRACTOR = TextSegmentExtractor(model_name)
-
-
-def _extract_text_segments_worker(
-    file_path_str: str,
-    duration: int,
-    count: int,
-    cache_dir_str: str,
-):
-    """Extract text segments for a single file inside a worker process."""
-    file_path = Path(file_path_str)
-    cache_dir = Path(cache_dir_str)
-    cache_dir.mkdir(exist_ok=True)
-    cache_file = cache_dir / file_path.with_suffix(".json").name
-
-    if cache_file.exists():
-        with open(cache_file, "r") as json_in:
-            return json.load(json_in)
-
-    segments = _PROCESS_TEXT_EXTRACTOR.get_text_segments(file_path, duration, count)
-    with open(cache_file, "w") as json_out:
-        json.dump(segments, json_out)
-    return segments
 
 @dataclass
 class MatchResult:
     file: Path
     matches: List[Tuple[Tuple[float, int] or float, str, str]]
     known_episode: Tuple[int, int]
-
 
 class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
@@ -81,21 +50,20 @@ class IndexedEpisodeMatcher:
         self.extracted_text_dir = self.series.dot_dir / "extracted-text"
         self.extracted_text_dir.mkdir(exist_ok=True)
 
+        self.cache = TextSegmentCache(config, self.extracted_text_dir,
+                                      self.segment_duration, self.segment_count)
+
     def match(self, paths):
         files = list(self._collect_files(paths))
         if not files:
             return []
 
-        for file in files:
-            logger.info(f"Processing file: {file}")
-
         text_segments_map = self._ensure_text_segments(files)
 
-        query_workers = self._determine_thread_workers(len(files))
         query_results: Dict[
             Path, List[Tuple[Tuple[float, int] or float, str, str]]
         ] = {}
-        with ThreadPoolExecutor(max_workers=query_workers) as executor:
+        with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_file = {
                 executor.submit(self.index.query_intervals, text_segments_map[file]): file
                 for file in files
@@ -113,81 +81,40 @@ class IndexedEpisodeMatcher:
 
         return results
 
-    def match_intervals(self, file):
-        """
-        match against the extracted intervals, targeting the query to only
-        subtitle segments that start at the same time as the extracted text
-        :param file: the file to match
-        :return: (distance, season, episode) tuples
-        """
-        text_segments = self.extract_text_segments(file)
-        return self.index.query_intervals(text_segments)
-
-    def extract_text_segments(self, file) -> List[Tuple[int, str]]:
-        return self._ensure_text_segments([file])[file]
-
-    def _collect_files(self, paths: Iterable[Path]) -> Iterable[Path]:
+    @staticmethod
+    def _collect_files(paths: Iterable[Path]) -> Iterable[Path]:
         for path in paths:
             if path.is_file():
                 yield path
             else:
-                yield from (
-                    candidate for candidate in path.rglob("*.mkv") if candidate.is_file()
-                )
+                yield from (candidate for candidate in path.rglob("*.mkv")
+                            if candidate.is_file())
 
     def _ensure_text_segments(self, files: List[Path]) -> Dict[Path, List[Tuple[int, str]]]:
         if not files:
             return {}
 
-        cache_dir = self._ensure_cache_dir()
-        text_segments: Dict[Path, List[Tuple[int, str]]] = {}
-        missing_files: List[Path] = []
+        cached_segments = self.cache.get_cached_segments(files)
+        missing_files = files - cached_segments.keys()
+        extracted_segments = self.extract_segments(missing_files) if missing_files else {}
 
-        for file in files:
-            cache_file = cache_dir / file.with_suffix(".json").name
-            if cache_file.exists():
-                with open(cache_file, "r") as json_in:
-                    text_segments[file] = json.load(json_in)
-            else:
-                missing_files.append(file)
+        return cached_segments | extracted_segments
 
-        if missing_files:
-            process_workers = self._determine_process_workers(len(missing_files))
-            ctx = multiprocessing.get_context("spawn")
-            with ProcessPoolExecutor(
-                max_workers=process_workers,
-                initializer=_init_text_extractor_worker,
-                initargs=(self.text_extractor_model,),
-                mp_context=ctx,
-            ) as executor:
-                future_to_file = {
-                    executor.submit(
-                        _extract_text_segments_worker,
-                        str(file),
-                        self.segment_duration,
-                        self.segment_count,
-                        str(cache_dir),
-                    ): file
-                    for file in missing_files
-                }
-                for future in as_completed(future_to_file):
-                    file = future_to_file[future]
-                    text_segments[file] = future.result()
+    def extract_segments(self, missing_files: Iterable[Path]) -> Dict[Path, list[tuple[int, str]]]:
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=4,
+            initializer=_init_text_extractor_worker,
+            initargs=(self.text_extractor_model, self.segment_duration, self.segment_count,),
+            mp_context=ctx,
+        ) as executor:
+            results = executor.map(_extract_text_segments_worker, missing_files)
 
-        return text_segments
+            text_segments = {file: result
+                             for file, result in zip(missing_files, results)}
 
-    def _ensure_cache_dir(self) -> Path:
-        cache_dir = self.extracted_text_dir / f"dur{self.segment_duration}s_count{self.segment_count}"
-        cache_dir.mkdir(exist_ok=True)
-        return cache_dir
-
-    def _determine_process_workers(self, task_count: int) -> int:
-        cpu_count = os.cpu_count() or 1
-        return max(1, min(task_count, cpu_count))
-
-    def _determine_thread_workers(self, task_count: int) -> int:
-        cpu_count = os.cpu_count() or 1
-        return max(1, min(task_count, cpu_count))
+            self.cache.write_cache(text_segments)
+            return text_segments
 
 def match_debug(config: Configuration):
     extract_file = Path(config.args.extract_file)
@@ -217,3 +144,38 @@ def match_debug(config: Configuration):
 
 
     console.print(json.dumps(combined, indent=2))
+
+class TextSegmentCache:
+    def __init__(self, config: Configuration, extracted_text_dir: Path,
+                 segment_duration: int, segment_count: int):
+        self.config = config
+        self.extracted_text_dir = extracted_text_dir
+        self.segment_duration = segment_duration
+        self.segment_count = segment_count
+
+    def _ensure_cache_dir(self) -> Path:
+        cache_dir = self.extracted_text_dir / f"dur{self.segment_duration}s_count{self.segment_count}"
+        cache_dir.mkdir(exist_ok=True)
+        return cache_dir
+
+    def get_cached_segments(self, files: List[Path]) -> Tuple[Dict[Path, List[Tuple[int, str]]], List[Path]]:
+        cache_dir = self._ensure_cache_dir()
+        text_segments: Dict[Path, List[Tuple[int, str]]] = {}
+
+        for file in files:
+            cache_file = cache_dir / file.with_suffix(".json").name
+            if not cache_file.exists():
+                continue
+            with open(cache_file, "r") as json_in:
+                text_segments[file] = json.load(json_in)
+
+        return text_segments
+
+    def write_cache(self, text_segments: Dict[Path, List[Tuple[int, str]]]):
+        cache_dir = self._ensure_cache_dir()
+
+        for file, segments in text_segments.items():
+            cache_file = cache_dir / file.with_suffix(".json").name
+            if not cache_file.exists():
+                with open(cache_file, "w") as json_out:
+                    json.dump(segments, json_out)

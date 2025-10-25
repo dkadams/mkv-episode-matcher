@@ -3,17 +3,12 @@ import sys
 
 from loguru import logger
 from rich.console import Console
-from rich.panel import Panel
 
-from mkv_episode_matcher import __version__
 from mkv_episode_matcher.args import build_args_parser
 from mkv_episode_matcher.config import CONFIG_DIR, get_config
 
 # Initialize rich console for better output
 console = Console()
-
-# Log the start of the application
-logger.info("Starting the application")
 
 # Check if logs directory exists, if not create it
 log_dir = CONFIG_DIR / "logs"
@@ -54,6 +49,9 @@ def main():
 
 # Run the main function if the script is run directly
 if __name__ == "__main__":
+    # Log the start of the application
+    logger.info("Starting mkv-episode-matcher")
+
     try:
         main()
     except KeyboardInterrupt:
