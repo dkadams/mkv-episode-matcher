@@ -215,5 +215,5 @@ def get_index_parser():
         action="store_const", const="hnswlib",
         help="Use hnswlib for indexes.")
 
-    parser.set_defaults(index_format="annoy")
+    parser.set_defaults(index_format="hnswlib")
     return parser
