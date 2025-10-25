@@ -15,6 +15,7 @@ from mkv_episode_matcher.chroma_subtitle_index import (
     ChromaSubtitleIndexReader,
 )
 from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.episode import episode_from_path
 from mkv_episode_matcher.extract_text_segments_worker import \
     _init_text_extractor_worker, _extract_text_segments_worker
 from mkv_episode_matcher.hnswlib_subtitle_index import \
@@ -75,9 +76,8 @@ class IndexedEpisodeMatcher:
         results = []
         for file in files:
             matches = query_results[file]
-            info = guessit(file.name)
-            actual = info.get("season"), info.get("episode") if info else None
-            results.append(MatchResult(file, matches, actual))
+            actual_episode = episode_from_path(file)
+            results.append(MatchResult(file, matches, actual_episode))
 
         return results
 
@@ -122,9 +122,10 @@ def match_debug(config: Configuration):
     series = get_series(extract_file)
     index = ChromaSubtitleIndex(config, series)
 
-    info = guessit(str(extract_file))
-    if not info:
-        raise ValueError("Unable to guess info from file (not a labeled episode?)")
+    episode = episode_from_path(extract_file)
+    if not episode:
+        raise ValueError("Unable to extract season/episode number from file "
+                         "(not a labeled episode?)")
 
     with open(config.args.extract_file, "r") as f:
         extracts = json.load(f)
@@ -133,9 +134,8 @@ def match_debug(config: Configuration):
     for offset, extracted_text in extracts:
         start_ms = offset * 30 * 1000
         query = {"$and": [
-        #     {"start_ms": start_ms},
-             {"season_number": info.get("season")},
-             {"episode_number": info.get("episode")}
+             {"season_number": episode[0]},
+             {"episode_number": episode[1]}
         ]}
         #query = {"start_ms": start_ms}
         console.print(f"Query: {query}")

@@ -56,6 +56,12 @@ def episode_tuple(episode: str) -> tuple[int, int]:
 
 def episode_from_path(file: Path) -> Optional[tuple[int, int]]:
     def from_opensubs():
+        """
+        subtitle_downloader.py saves off a JSON file with API response data
+        when it downloads a subtitle from OpenSubtitles. The subtitle filename
+        contains the season and episode number we requested, but the API data
+        seems more authoritative.
+        """
         opensubs_file = file.with_suffix(".opensubtitles")
         if not opensubs_file.exists():
             return None
@@ -65,13 +71,22 @@ def episode_from_path(file: Path) -> Optional[tuple[int, int]]:
 
         season_number = int(opensubs_data["season_number"])
         episode_number = int(opensubs_data["episode_number"])
-        return season_number, episode_number
+        if season_number and episode_number:
+            return season_number, episode_number
+        else:
+            return None
 
     def from_guessit():
         matches = guessit(file.name)
+        if not matches:
+            return None
+
         season_number = matches.get("season")
         episode_number = matches.get("episode")
-        return season_number, episode_number
+        if season_number and episode_number:
+            return season_number, episode_number
+        else:
+            return None
 
     return from_opensubs() or from_guessit()
 
