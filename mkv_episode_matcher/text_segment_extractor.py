@@ -4,10 +4,10 @@ import time
 
 import torch
 import whisper
+from faster_whisper import WhisperModel
 from loguru import logger
 
 from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
-
 
 class WhisperTranscriber:
     def __init__(self, model_name):
@@ -15,12 +15,22 @@ class WhisperTranscriber:
 
     def transcribe(self, audio_path):
         fp16 = self.model.device != torch.device("cpu")
-        return whisper.transcribe(self.model, str(audio_path), fp16=fp16)
+        result = whisper.transcribe(self.model, str(audio_path), fp16=fp16)
+        return result["text"] if result else None
 
+class FasterWhisperTranscriber:
+    def __init__(self, model_name):
+        self.model = WhisperModel(model_name)
+
+    def transcribe(self, audio_path):
+        logger.info(f"Transcribing {audio_path}")
+        segments, info = self.model.transcribe(str(audio_path))
+        text_segments = [segment.text for segment in segments]
+        return " ".join(text_segments)
 
 class TextSegmentExtractor:
-    def __init__(self, model_name, transcriber=None):
-        self.transcriber = transcriber or WhisperTranscriber(model_name)
+    def __init__(self, model_name, transcriber):
+        self.transcriber = transcriber(model_name)
 
     def get_random_segments(self, path, duration, count):
         total_duration = AudioChunkExtractor.get_video_duration(path)
@@ -42,10 +52,13 @@ class TextSegmentExtractor:
                 total_extract_time += time.time() - before
 
                 before = time.time()
-                result = self.transcriber.transcribe(chunk_path)
+                text = self.transcriber.transcribe(chunk_path)
                 total_transcribe_time += time.time() - before
 
-                results.append((index, result))
+                if text:
+                    results.append((index, text))
+                else:
+                    logger.warning(f"Failed to transcribe {chunk_path}")
 
         logger.info(f"Extracted {count} audio chunks "
                     f"in {total_extract_time:.2f}s, transcribed "
@@ -54,4 +67,4 @@ class TextSegmentExtractor:
 
     def get_text_segments(self, path, duration=30, count=10):
         segments = self.get_random_segments(path, duration, count)
-        return [(index, segment['text']) for index, segment in segments]
+        return [(index, text) for index, text in segments]

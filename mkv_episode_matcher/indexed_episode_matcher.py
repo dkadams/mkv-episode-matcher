@@ -105,7 +105,8 @@ class IndexedEpisodeMatcher:
         with ProcessPoolExecutor(
             max_workers=4,
             initializer=_init_text_extractor_worker,
-            initargs=(self.text_extractor_model, self.segment_duration, self.segment_count,),
+            initargs=(self.config.args.transcriber, self.text_extractor_model,
+                      self.segment_duration, self.segment_count),
             mp_context=ctx,
         ) as executor:
             results = executor.map(_extract_text_segments_worker, missing_files)
