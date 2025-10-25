@@ -50,7 +50,8 @@ class Series:
             with open(settings_file, 'r') as file:
                 settings = json.load(file)
 
-        index_dir = Path(settings.get("index-dir")) or series_dot_dir / "indexes"
+        index_dir_setting = settings.get("index-dir")
+        index_dir = Path(index_dir_setting) if index_dir_setting else series_dot_dir / "indexes"
         return Series(series_dir, series_dot_dir, series_detail, series_name,
                       index_dir)
 
