@@ -158,7 +158,10 @@ class TextSegmentCache:
         cache_dir.mkdir(exist_ok=True)
         return cache_dir
 
-    def get_cached_segments(self, files: List[Path]) -> Tuple[Dict[Path, List[Tuple[int, str]]], List[Path]]:
+    def get_cached_segments(self, files: List[Path]) -> Dict[Path, List[Tuple[int, str]]]:
+        if self.config.args.no_transcription_cache:
+            return dict()
+
         cache_dir = self._ensure_cache_dir()
         text_segments: Dict[Path, List[Tuple[int, str]]] = {}
 

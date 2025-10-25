@@ -126,6 +126,10 @@ def add_match(subparsers, config_parser, index_parser):
                               nargs='+',
                               default=".mkv",
                               help="File extension to match (default: .mkv)")
+
+    match_parser.add_argument('--no-transcription-cache',
+                              action="store_true",
+                              help="Don't read or create transcribed text cache")
     match_parser.set_defaults(func=match_episodes)
 
 
