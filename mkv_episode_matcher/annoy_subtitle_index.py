@@ -12,7 +12,8 @@ from rich.progress import Progress
 from sentence_transformers import SentenceTransformer
 
 from mkv_episode_matcher.episode import episode_str, \
-    episode_tuple, episode_from_path
+    episode_tuple, episode_from_path, EpisodeKey
+from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
@@ -147,8 +148,8 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[tuple[float, int], str, str]]:
-        distances_by_episode = {}
+    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+        scores_by_episode: dict[EpisodeKey, Score] = {}
         for interval, text in text_segments:
             index_entry = self.indexes.get(interval)
             if index_entry is None:
@@ -161,19 +162,16 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
             logger.info(f"Query: {interval} -> {ids} -> {distances}")
             for id, distance in zip(ids, distances):
                 episode_id = directory[id]
-                if episode_id in distances_by_episode:
-                    cur = distances_by_episode[episode_id]
-                    distances_by_episode[episode_id] = (min(cur[0], distance),
-                                                        cur[1] + 1)
-                else:
-                    distances_by_episode[episode_id] = (distance, 1)
 
-        ordered_ep_id = sorted(distances_by_episode,
+                cur = scores_by_episode.setdefault(episode_id, Score(0, 1000000))
+                score = Score(cur.count + 1, min(cur.min_distance, distance))
+                scores_by_episode[episode_id] = score
+
+        ordered_ep_id = sorted(scores_by_episode,
                                # Order by frequency DESCENDING, distance ASCENDING
-                               key=lambda k: (-distances_by_episode[k][1],
-                                              distances_by_episode[k][0]))
+                               key=lambda k: scores_by_episode[k])
 
-        return [(distances_by_episode[ep_id], ep_id[0], ep_id[1])
+        return [Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
                 for ep_id in ordered_ep_id[:5]] # only return the top 5 results
 
     def load_indexes(self):
@@ -185,7 +183,7 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                      if file.is_file() and file.suffix == ".ann"]
         return {interval: self.get_index(interval) for interval in intervals}
 
-    def get_index(self, interval: int) -> tuple[dict[int, tuple[int, int]], AnnoyIndex] | None:
+    def get_index(self, interval: int) -> tuple[dict[int, EpisodeKey], AnnoyIndex] | None:
         index_file = self.index_dir / f"{interval}.ann"
         directory_file = self.index_dir / f"{interval}.json"
         if not (index_file.exists() and directory_file.exists()):
@@ -202,7 +200,10 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
         logger.info(f"Loading directory for interval: {interval}: {directory_file}")
         with open(directory_file, "r") as json_in:
             data = json.load(json_in)
-            index_directory = {int(id): (season, episode)
+            index_directory = {int(id): EpisodeKey(season, episode)
                                for id, (season, episode) in data.items()}
 
         return index_directory, index
+
+AnnoySubtitleIndex.reader_type = AnnoySubtitleIndexReader
+AnnoySubtitleIndex.writer_type = AnnoySubtitleIndexWriter

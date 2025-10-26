@@ -95,7 +95,7 @@ def get_series(path):
     return Series.from_dir(series_dir)
 
 
-def get_seasons_by_number(series: Series):
+def get_seasons_by_number(series: Series) -> dict[int, Season]:
     season_detail = [season for key, season in series.detail.items()
                      if key.startswith("season/")]
 

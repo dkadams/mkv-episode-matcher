@@ -4,45 +4,64 @@ from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, \
     as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Tuple, Self
 
-from guessit import guessit
 from rich.console import Console
 
-from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndexReader
-from mkv_episode_matcher.chroma_subtitle_index import (
-    ChromaSubtitleIndex,
-    ChromaSubtitleIndexReader,
-)
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import episode_from_path
+from mkv_episode_matcher.episode import episode_from_path, EpisodeKey
 from mkv_episode_matcher.extract_text_segments_worker import \
     _init_text_extractor_worker, _extract_text_segments_worker
-from mkv_episode_matcher.hnswlib_subtitle_index import \
-    HnswlibSubtitleIndexReader
-from mkv_episode_matcher.series import Series, get_series
+from mkv_episode_matcher.series import Series
 
 console = Console()
 
-@dataclass
+@dataclass(frozen=True, eq=True)
+class Score:
+    """
+    Represents how well an episode matched a subtitle file.
+        -count: Number of segments matched
+        -min_distance: Minimum distance of all the matched segments
+    """
+    count: int
+    min_distance: float
+
+    def key(self) -> tuple[int, float]:
+        """
+        DESCENDING matches, ASCENDING distance.
+        More matches, less distance = better match.
+        """
+        return -self.count, self.min_distance
+
+    def __lt__(self, other: Self) -> bool:
+        return self.key() < other.key()
+
+    def __str__(self):
+        return f"#: {self.count} min(d): {self.min_distance:.5f}"
+
+
+@dataclass(frozen=True, eq=True, order=True)
+class Match:
+    season: int
+    episode: int
+    score: Score
+
+    def key(self) -> EpisodeKey:
+        return EpisodeKey(self.season, self.episode)
+
+@dataclass(frozen=True, eq=True)
 class MatchResult:
     file: Path
-    matches: List[Tuple[Tuple[float, int] or float, str, str]]
-    known_episode: Tuple[int, int]
+    matches: list[Match]
+    known_episode: tuple[int, int]
 
 class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
         self.config = config
         self.series = series
 
-        if config.args.index_format == "chroma":
-            self.index = ChromaSubtitleIndexReader(config, series)
-        elif config.args.index_format == "annoy":
-            self.index = AnnoySubtitleIndexReader(config, series)
-        elif config.args.index_format == "hnswlib":
-            self.index = HnswlibSubtitleIndexReader(config, series)
-        else:
-            raise Exception(f"Unknown index format: {config.args.index_format}")
+        index_cls = config.args.index_type.reader_type
+        self.index = index_cls(config, series)
 
         self.text_extractor_model = "small.en"
         self.segment_duration = 30
@@ -54,16 +73,14 @@ class IndexedEpisodeMatcher:
         self.cache = TextSegmentCache(config, self.extracted_text_dir,
                                       self.segment_duration, self.segment_count)
 
-    def match(self, paths):
+    def match(self, paths) -> List[MatchResult]:
         files = list(self._collect_files(paths))
         if not files:
             return []
 
         text_segments_map = self._ensure_text_segments(files)
 
-        query_results: Dict[
-            Path, List[Tuple[Tuple[float, int] or float, str, str]]
-        ] = {}
+        query_results: Dict[Path, List[Match]] = {}
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_file = {
                 executor.submit(self.index.query_intervals, text_segments_map[file]): file
@@ -116,35 +133,6 @@ class IndexedEpisodeMatcher:
 
             self.cache.write_cache(text_segments)
             return text_segments
-
-def match_debug(config: Configuration):
-    extract_file = Path(config.args.extract_file)
-    series = get_series(extract_file)
-    index = ChromaSubtitleIndex(config, series)
-
-    episode = episode_from_path(extract_file)
-    if not episode:
-        raise ValueError("Unable to extract season/episode number from file "
-                         "(not a labeled episode?)")
-
-    with open(config.args.extract_file, "r") as f:
-        extracts = json.load(f)
-
-    combined = {}
-    for offset, extracted_text in extracts:
-        start_ms = offset * 30 * 1000
-        query = {"$and": [
-             {"season_number": episode[0]},
-             {"episode_number": episode[1]}
-        ]}
-        #query = {"start_ms": start_ms}
-        console.print(f"Query: {query}")
-        result = index.intervals.get(where=query)
-        combined[start_ms] = (extracted_text, result["documents"], result["metadatas"])
-        break
-
-
-    console.print(json.dumps(combined, indent=2))
 
 class TextSegmentCache:
     def __init__(self, config: Configuration, extracted_text_dir: Path,

@@ -1,13 +1,20 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, List
+from typing import Optional, Tuple, List, NamedTuple
 
 from guessit import guessit
 from rich.console import Console
-from loguru import logger
 
 console = Console()
+
+class EpisodeKey(NamedTuple):
+    season_number: int
+    episode_number: int
+
+    def __str__(self):
+        return episode_str(self.season_number, self.episode_number)
+
 
 def get_specs(config):
     # Normalize filtering to a list of episode specifiers
@@ -28,7 +35,7 @@ def _get_episodes(season_detail):
                                          episode_number, episode_id)
     return result
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True, frozen=True, order=True)
 class Episode:
     season_number: int
     episode_number: int
@@ -36,6 +43,9 @@ class Episode:
 
     def short_str(self):
         return episode_str(self.season_number, self.episode_number)
+
+    def key(self) -> EpisodeKey:
+        return EpisodeKey(self.season_number, self.episode_number)
 
 def episode_str(season_number: int | str,
                 episode_number: int | str | Tuple[int, int] | List[int]) -> str:
@@ -90,10 +100,10 @@ def episode_from_path(file: Path) -> Optional[tuple[int, int]]:
 
     return from_opensubs() or from_guessit()
 
-@dataclass(eq=True, frozen=True)
+@dataclass(eq=True, frozen=True, order=True)
 class Season:
     season_number: int
-    episodes: dict[int, Episode]
+    episodes: dict[int, Episode] = field(compare=False)
 
     def episodes_matching(self, episode_spec):
         if episode_spec is None:

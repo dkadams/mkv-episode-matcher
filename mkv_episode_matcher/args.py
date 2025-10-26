@@ -1,11 +1,13 @@
 import argparse
 
 from mkv_episode_matcher import __version__
+from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndex
+from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
 from mkv_episode_matcher.episode_matcher import match_episodes
-from mkv_episode_matcher.indexed_episode_matcher import match_debug
-from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
+from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
+from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
 from mkv_episode_matcher.subtitle_index import index_subtitles
 from mkv_episode_matcher.text_segment_extractor import (
@@ -31,10 +33,14 @@ def build_args_parser():
     add_init_series(subparsers, config_parser, series_dir_parser)
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
 
-    add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser, index_parser)
+    add_index_subs(
+        subparsers,
+        config_parser,
+        series_dir_parser,
+        episode_parser,
+        index_parser,
+    )
     add_match(subparsers, config_parser, index_parser)
-
-    add_match_debug(subparsers, config_parser, index_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -137,35 +143,37 @@ def add_match(subparsers, config_parser, index_parser):
                               action="store_true",
                               help="Don't read or create transcribed text cache")
 
-    xscribe_model_group = match_parser.add_mutually_exclusive_group()
-    xscribe_model_group.add_argument(
+    match_parser.add_argument('--display-by-episode', '-E',
+                              dest="display_by_episode",
+                              action="store_true",
+                              help="Display results by episode")
+    match_parser.add_argument('--display-by-file', '-F',
+                              dest="display_by_file",
+                              action="store_true",
+                              help="Display results by file")
+
+    xscriber_group = match_parser.add_mutually_exclusive_group()
+    xscriber_group.add_argument(
         "--whisper", dest="transcriber",
         action="store_const", const=WhisperTranscriber,
         help="Use Whisper for transcription.")
-    xscribe_model_group.add_argument(
+    xscriber_group.add_argument(
         "--faster-whisper", dest="transcriber",
         action="store_const", const=FasterWhisperTranscriber,
         help="Use Faster Whisper for transcription.")
-    xscribe_model_group.add_argument(
+    xscriber_group.add_argument(
         "--whispercpp-cli", dest="transcriber",
         action="store_const", const=WhispercppCliTranscriber,
         help="Use whisper.cpp's CLI for transcription.")
-    xscribe_model_group.add_argument(
+    xscriber_group.add_argument(
         "--whisperkit-cli", dest="transcriber",
         action="store_const", const=WhisperKitCliTranscriber,
         help="Use WhisperKit's CLI for transcription.")
 
-    match_parser.set_defaults(func=match_episodes, transcriber=WhispercppCliTranscriber)
 
-def add_match_debug(subparsers, config_parser, index_parser):
-        parser = subparsers.add_parser("match-debug",
-                                       parents=[config_parser, index_parser],
-                                       help="Debug matching logic")
-
-        parser.add_argument('extract_file',
-                                  help="Path to an extract file for already labeled video file")
-
-        parser.set_defaults(func=match_debug)
+    match_parser.set_defaults(func=match_episodes,
+                              transcriber=WhispercppCliTranscriber,
+                              display_by_episode=True,)
 
 def get_series_dir_parser() -> argparse.ArgumentParser:
     series_dir_parser = argparse.ArgumentParser(add_help=False)
@@ -227,17 +235,17 @@ def get_index_parser():
     parser = argparse.ArgumentParser(add_help=False)
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--chroma", dest="index_format",
-        action="store_const", const="chroma",
+        "--chroma", dest="index_type",
+        action="store_const", const=ChromaSubtitleIndex,
         help="Use chroma for indexes.")
     group.add_argument(
-        "--annoy", dest="index_format",
-        action="store_const", const="annoy",
+        "--annoy", dest="index_type",
+        action="store_const", const=AnnoySubtitleIndex,
         help="Use Annoy for indexes.")
     group.add_argument(
-        "--hnswlib", dest="index_format",
-        action="store_const", const="hnswlib",
+        "--hnswlib", dest="index_type",
+        action="store_const", const=HnswlibSubtitleIndex,
         help="Use hnswlib for indexes.")
 
-    parser.set_defaults(index_format="hnswlib")
+    parser.set_defaults(index_type=HnswlibSubtitleIndex)
     return parser

@@ -13,8 +13,9 @@ from sentence_transformers import SentenceTransformer
 
 from mkv_episode_matcher.episode import (
     episode_str,
-    episode_tuple, episode_from_path,
+    episode_tuple, episode_from_path, EpisodeKey,
 )
+from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
@@ -175,10 +176,8 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(
-        self, text_segments: list[tuple[int, str]]
-    ) -> list[tuple[tuple[float, int], str, str]]:
-        distances_by_episode = {}
+    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+        distances_by_episode: dict[EpisodeKey, Score]  = {}
         for interval, text in text_segments:
             index_entry = self.indexes.get(interval)
             if index_entry is None:
@@ -207,27 +206,18 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
             for item_id, distance in zip(ids, dists):
                 if item_id == -1:
                     continue
-                episode_id = directory[item_id]
-                if episode_id in distances_by_episode:
-                    cur = distances_by_episode[episode_id]
-                    distances_by_episode[episode_id] = (
-                        min(cur[0], distance),
-                        cur[1] + 1,
-                    )
-                else:
-                    distances_by_episode[episode_id] = (distance, 1)
+                key = directory[item_id]
+                cur = distances_by_episode.setdefault(key, Score(0, 1000000))
+                score = Score(cur.count + 1, min(cur.min_distance, distance))
+                distances_by_episode[key] = score
 
-        ordered_ep_id = sorted(
-            distances_by_episode,
-            key=lambda k: (-distances_by_episode[k][1], distances_by_episode[k][0]),
-        )
+        ordered_ep_id = sorted(distances_by_episode,
+                                key=lambda k: distances_by_episode[k])
 
-        return [
-            (distances_by_episode[ep_id], ep_id[0], ep_id[1])
-            for ep_id in ordered_ep_id[:5]
-        ]
+        return [Match(ep_id[0], ep_id[1], distances_by_episode[ep_id])
+                for ep_id in ordered_ep_id[:5]]
 
-    def load_indexes(self):
+    def load_indexes(self) -> dict[int, tuple[dict[int, EpisodeKey], hnswlib.Index]]:
         if not self.index_dir.exists():
             console.print(
                 f"[bold red]No index for series: {self.series.name}"
@@ -243,7 +233,7 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
 
     def get_index(
         self, interval: int
-    ) -> tuple[dict[int, tuple[int, int]], hnswlib.Index] | None:
+    ) -> tuple[dict[int, EpisodeKey], hnswlib.Index] | None:
         index_file = self.index_dir / f"{interval}.bin"
         directory_file = self.index_dir / f"{interval}.json"
         if not (index_file.exists() and directory_file.exists()):
@@ -259,7 +249,8 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
         with open(directory_file, "r") as json_in:
             data = json.load(json_in)
             index_directory = {
-                int(id): (season, episode) for id, (season, episode) in data.items()
+                int(id): EpisodeKey(season, episode)
+                for id, (season, episode) in data.items()
             }
 
         if not index_directory:
@@ -269,3 +260,6 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
         index.load_index(str(index_file), max_elements=len(index_directory))
         index.set_ef(200)
         return index_directory, index
+
+HnswlibSubtitleIndex.reader_type = HnswlibSubtitleIndexReader
+HnswlibSubtitleIndex.writer_type = HnswlibSubtitleIndexWriter

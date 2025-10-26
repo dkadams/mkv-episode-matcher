@@ -8,7 +8,8 @@ from rich.console import Console
 from rich.progress import Progress
 
 from mkv_episode_matcher.episode import episode_str, \
-    episode_from_path
+    episode_from_path, EpisodeKey
+from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
@@ -72,8 +73,8 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[tuple[tuple[float, int], str, str]]:
-        distances_by_episode = {}
+    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+        scores_by_episode: dict[EpisodeKey, Score] = {}
         for interval, text in text_segments:
             start_ms = interval * 30 * 1000
             result = self.intervals.query(query_texts=[text],
@@ -83,19 +84,18 @@ class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
 
             for md, distance in zip(result["metadatas"][0],
                                     result["distances"][0]):
-                episode_id = (md["season_number"], md["episode_number"])
+                key = EpisodeKey(md["season_number"], md["episode_number"])
 
-                if episode_id in distances_by_episode:
-                    cur = distances_by_episode[episode_id]
-                    distances_by_episode[episode_id] = (min(cur[0], distance),
-                                                        cur[1] + 1)
-                else:
-                    distances_by_episode[episode_id] = (distance, 1)
+                cur = scores_by_episode.setdefault(key, Score(0, 1000000))
+                score = Score(cur.count + 1, min(cur.min_distance, distance))
+                scores_by_episode[key] = score
 
-        ordered_ep_id = sorted(distances_by_episode,
-                               # Order by frequency DESCENDING, distance ASCENDING
-                               key=lambda k: (-distances_by_episode[k][1],
-                                              distances_by_episode[k][0]))
 
-        return [(distances_by_episode[ep_id], ep_id[0], ep_id[1])
+        ordered_ep_id = sorted(scores_by_episode,
+                               key=lambda k: scores_by_episode[k])
+
+        return [Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
                 for ep_id in ordered_ep_id[:5]] # only return the top 5 results
+
+ChromaSubtitleIndex.reader_type = ChromaSubtitleIndexReader
+ChromaSubtitleIndex.writer_type = ChromaSubtitleIndexWriter
