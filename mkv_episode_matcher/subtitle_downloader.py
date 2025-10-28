@@ -49,8 +49,6 @@ class OpenSubtitlesDownloader:
         self.client = OpenSubtitles(open_subtitles_user_agent, open_subtitles_api_key)
         self.client.login(open_subtitles_username, open_subtitles_password)
 
-        self.subtitle_dir = self.series.dot_dir / "subtitles"
-
     def download(self, episode: Episode):
         console.print(f"Preparing to download series: {self.series.name} - {episode.short_str()}...")
 
@@ -76,11 +74,11 @@ class OpenSubtitlesDownloader:
         selected_subtitle = subtitles[0]
 
         srt_filename = f"{self.series.name} - {episode.short_str()}.srt"
-        srt_filepath = self.subtitle_dir / srt_filename
+        srt_filepath = self.series.subtitles_dir / srt_filename
 
         srt_file = self.client.download_and_save(selected_subtitle)
-        if not self.subtitle_dir.exists():
-            self.subtitle_dir.mkdir(parents=True, exist_ok=True)
+        if not self.series.subtitles_dir.exists():
+            self.series.subtitles_dir.mkdir(parents=True, exist_ok=True)
         shutil.move(srt_file, srt_filepath)
         logger.info(f"Subtitle saved to {srt_filepath}")
 
@@ -126,7 +124,7 @@ class OpenSubtitlesDownloader:
         patterns = self.generate_subtitle_patterns(episode)
 
         for pattern in patterns:
-            filepath = self.subtitle_dir / pattern
+            filepath = self.series.subtitles_dir / pattern
             if filepath.exists():
                 return filepath
 

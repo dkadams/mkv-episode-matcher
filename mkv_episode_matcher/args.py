@@ -122,6 +122,10 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
                                                        episode_parser,
                                                        index_parser],
                                               help="Index subtitles for a series")
+
+    index_subs_parser.add_argument("--rebuild",
+                                   action="store_true",
+                                   help="Rebuild the index from scratch")
     index_subs_parser.set_defaults(func=index_subtitles)
 
 

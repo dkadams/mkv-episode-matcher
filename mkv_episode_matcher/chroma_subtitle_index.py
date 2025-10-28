@@ -7,8 +7,7 @@ from loguru import logger
 from rich.console import Console
 from rich.progress import Progress
 
-from mkv_episode_matcher.episode import episode_str, \
-    episode_from_path, EpisodeKey
+from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
@@ -38,7 +37,7 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 
             def index_file(file):
                 logger.info(f"Indexing: {file}")
-                episode = episode_from_path(file)
+                episode = EpisodeKey.from_path(file)
                 logger.info(f"Identified: {file} as episode: {episode}")
                 if episode in episodes:
                     logger.info(f"Indexing: {file} as episode: {episode}")
@@ -47,8 +46,8 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
 
             list(executor.map(index_file, subtitle_files))
 
-    def index_episode(self, path, episode: tuple[int, int]):
-        logger.info(f"Indexing episode: {self.series.name} episode: {episode_str(*episode)}")
+    def index_episode(self, path, episode: EpisodeKey):
+        logger.info(f"Indexing episode: {self.series.name} episode: {episode}")
 
         sub_file = pysubs2.load(path, format_="srt")
 

@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List, Tuple, Self
 from rich.console import Console
 
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import episode_from_path, EpisodeKey
+from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.extract_text_segments_worker import \
     _init_text_extractor_worker, _extract_text_segments_worker
 from mkv_episode_matcher.series import Series
@@ -53,7 +53,7 @@ class Match:
 class MatchResult:
     file: Path
     matches: list[Match]
-    known_episode: tuple[int, int]
+    known_episode: EpisodeKey
 
 class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
@@ -93,7 +93,7 @@ class IndexedEpisodeMatcher:
         results = []
         for file in files:
             matches = query_results[file]
-            actual_episode = episode_from_path(file)
+            actual_episode = EpisodeKey.from_path(file)
             results.append(MatchResult(file, matches, actual_episode))
 
         return results

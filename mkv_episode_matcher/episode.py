@@ -1,20 +1,76 @@
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Tuple, List, NamedTuple
+from typing import Optional, Tuple, List, NamedTuple, Self
 
 from guessit import guessit
 from rich.console import Console
 
 console = Console()
 
-class EpisodeKey(NamedTuple):
+class EpisodeKey(tuple[int, int]):
     season_number: int
     episode_number: int
 
-    def __str__(self):
-        return episode_str(self.season_number, self.episode_number)
+    def __new__(cls, season_number, episode_number):
+        return super().__new__(cls, (season_number, episode_number))
 
+    @property
+    def season_number(self):
+        return self[0]
+
+    @property
+    def episode_number(self):
+        return self[1]
+
+    def __str__(self):
+        return _episode_str(self.season_number, self.episode_number)
+
+    @staticmethod
+    def from_path(file: Path) -> Optional["EpisodeKey"]:
+        def from_opensubs() -> Optional["EpisodeKey"]:
+            """
+            subtitle_downloader.py saves off a JSON file with API response data
+            when it downloads a subtitle from OpenSubtitles. The subtitle filename
+            contains the season and episode number we requested, but the API data
+            seems more authoritative.
+            """
+            opensubs_file = file.with_suffix(".opensubtitles")
+            if not opensubs_file.exists():
+                return None
+
+            with open(opensubs_file, "r") as json_in:
+                opensubs_data = json.load(json_in)
+
+            season_number = int(opensubs_data["season_number"])
+            episode_number = int(opensubs_data["episode_number"])
+            if season_number and episode_number:
+                return EpisodeKey(season_number, episode_number)
+            else:
+                return None
+
+        def from_guessit() -> Optional["EpisodeKey"]:
+            matches = guessit(file.name)
+            if not matches:
+                return None
+
+            season_number = matches.get("season")
+            episode_number = matches.get("episode")
+            if season_number and episode_number:
+                return EpisodeKey(season_number, episode_number)
+            else:
+                return None
+
+        return from_opensubs() or from_guessit()
+
+    @staticmethod
+    def from_str(episode: str) -> "EpisodeKey":
+        parts = episode.split('S')[1].split('E')
+
+        season_number = int(parts[0])
+        episode_number = int(parts[1])
+
+        return EpisodeKey(season_number, episode_number)
 
 def get_specs(config):
     # Normalize filtering to a list of episode specifiers
@@ -42,12 +98,12 @@ class Episode:
     tmdb_id: int
 
     def short_str(self):
-        return episode_str(self.season_number, self.episode_number)
+        return _episode_str(self.season_number, self.episode_number)
 
     def key(self) -> EpisodeKey:
         return EpisodeKey(self.season_number, self.episode_number)
 
-def episode_str(season_number: int | str,
+def _episode_str(season_number: int | str,
                 episode_number: int | str | Tuple[int, int] | List[int]) -> str:
     if isinstance(episode_number, tuple) or isinstance(episode_number, list):
         separator = "-" if len(episode_number) == 2 else ","
@@ -55,50 +111,6 @@ def episode_str(season_number: int | str,
     else:
         ep_str = f"{int(episode_number):02d}"
     return f"S{int(season_number):02d}E{ep_str}"
-
-def episode_tuple(episode: str) -> tuple[int, int]:
-    parts = episode.split('S')[1].split('E')
-
-    season_number = int(parts[0])
-    episode_number = int(parts[1])
-
-    return season_number, episode_number
-
-def episode_from_path(file: Path) -> Optional[tuple[int, int]]:
-    def from_opensubs():
-        """
-        subtitle_downloader.py saves off a JSON file with API response data
-        when it downloads a subtitle from OpenSubtitles. The subtitle filename
-        contains the season and episode number we requested, but the API data
-        seems more authoritative.
-        """
-        opensubs_file = file.with_suffix(".opensubtitles")
-        if not opensubs_file.exists():
-            return None
-
-        with open(opensubs_file, "r") as json_in:
-            opensubs_data = json.load(json_in)
-
-        season_number = int(opensubs_data["season_number"])
-        episode_number = int(opensubs_data["episode_number"])
-        if season_number and episode_number:
-            return season_number, episode_number
-        else:
-            return None
-
-    def from_guessit():
-        matches = guessit(file.name)
-        if not matches:
-            return None
-
-        season_number = matches.get("season")
-        episode_number = matches.get("episode")
-        if season_number and episode_number:
-            return season_number, episode_number
-        else:
-            return None
-
-    return from_opensubs() or from_guessit()
 
 @dataclass(eq=True, frozen=True, order=True)
 class Season:

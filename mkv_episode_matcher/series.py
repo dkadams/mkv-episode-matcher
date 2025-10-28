@@ -9,8 +9,8 @@ from loguru import logger
 from rich.console import Console
 
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import episode_str, _get_episodes, Season, \
-    Episode, get_specs, UnknownEpisodeError
+from mkv_episode_matcher.episode import _get_episodes, Season, \
+    Episode, get_specs, UnknownEpisodeError, EpisodeKey
 
 console = Console()
 
@@ -22,7 +22,8 @@ class Series:
     detail: dict
     name: str
 
-    index_dir: Path = None
+    index_dir: Path
+    subtitles_dir: Path
 
     @lru_cache
     @staticmethod
@@ -52,18 +53,19 @@ class Series:
 
         index_dir_setting = settings.get("index-dir")
         index_dir = Path(index_dir_setting) if index_dir_setting else series_dot_dir / "indexes"
-        return Series(series_dir, series_dot_dir, series_detail, series_name,
-                      index_dir)
 
-    def get_episode_detail(self, episode: tuple[int, int], keys=None) -> dict[str, str | int]:
-        season_number, episode_number = episode
-        season_detail = self.detail[f"season/{season_number}"]
+        subtitles_dir = series_dot_dir / "subtitles"
+        return Series(series_dir, series_dot_dir, series_detail, series_name,
+                      index_dir, subtitles_dir)
+
+    def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
+        season_detail = self.detail[f"season/{episode.season_number}"]
         episode_detail = next((ep for ep in season_detail["episodes"]
-                               if ep["episode_number"] == episode_number), None)
+                               if ep["episode_number"] == episode.episode_number), None)
         if not episode_detail:
             raise ValueError(f"Error: No episode detail found for "
                              f"{self.name} "
-                             f"episode: {episode_str(*episode)}")
+                             f"episode: {episode}")
 
         return {k: episode_detail[k] for k in keys
                 or ["id", "season_number", "episode_number", "runtime"]}

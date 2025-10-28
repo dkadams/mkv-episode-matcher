@@ -1,20 +1,17 @@
 import json
-import math
-from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
-import pysubs2
 from annoy import AnnoyIndex
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress
 from sentence_transformers import SentenceTransformer
 
-from mkv_episode_matcher.episode import episode_str, \
-    episode_tuple, episode_from_path, EpisodeKey
+from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
-from mkv_episode_matcher.series import Series, get_specified_episodes
+from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.subtitle_index_helper import \
+    SubtitleIndexHelper
 
 console = Console()
 
@@ -30,98 +27,18 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
 
-        self.embeddings_dir = self.index_dir / "embeddings"
+        self.embedding_store = SubtitleIndexHelper(config, series,
+                                                   self.index_dir,
+                                                   self.model)
 
     def index_series(self):
-        episodes = {(ep.season_number, ep.episode_number)
-                    for ep in get_specified_episodes(self.config, self.series)}
-
-        subtitle_files = list(self.series.dir.rglob("*.srt"))
-
-        with Progress() as progress, ThreadPoolExecutor(max_workers=10) as executor:
-            # annoy indexes must be rebuilt from scratch
-            if self.index_dir.exists():
-                logger.info(f"Rebuilding index for: {self.series.name}, "
-                            f"deleting: {self.index_dir}")
-                index_files = [file for file in self.index_dir.iterdir()
-                               if file.suffix in {".ann", ".json"}
-                               and file.is_file()]
-                delete_progress = progress.add_task(
-                    f"Removing index for: {self.series.name}",
-                    total=len(index_files))
-                for index_file in index_files:
-                    index_file.unlink()
-                    progress.update(delete_progress, advance=1)
-                progress.remove_task(delete_progress)
-
-            extract_progress = progress.add_task(
-                f"Extracting embeddings for {self.series.name} "
-                f"({self.series.dir})", total=len(subtitle_files))
-
-            def extract_embeddings(file):
-                logger.info(f"Indexing: {file}")
-                episode = episode_from_path(file)
-                logger.info(f"Identified: {file} as episode: {episode}")
-                if episode in episodes:
-                    logger.info(f"Indexing: {file} as episode: {episode}")
-                    self.extract_embeddings(file, episode)
-                progress.update(extract_progress, advance=1)
-
-            list(executor.map(extract_embeddings, subtitle_files))
-            progress.remove_task(extract_progress)
-
-            interval_dirs = [dir for dir in self.embeddings_dir.iterdir()
-                             if dir.is_dir()]
-            index_progress = progress.add_task(
-                f"Indexing {self.series.name} ({self.series.dir})",
-                total=len(interval_dirs))
-            def index_interval(dir):
-                logger.info(f"Indexing {dir}")
-                self.build_interval_index(dir)
-                progress.update(index_progress, advance=1)
-
-            list(executor.map(index_interval, interval_dirs))
-            progress.remove_task(index_progress)
-
-    def extract_embeddings(self, path, episode: tuple[int, int]):
-        epi_str = episode_str(*episode)
-        logger.info(f"Indexing episode: {self.series.name} episode: {epi_str}")
-
-        sub_file = pysubs2.load(path, format_="srt")
-        metadata = self.series.get_episode_detail(episode)
-
-        # TODO maybe this should use the runtime from the subtitle file?
-        interval_count = math.ceil(metadata["runtime"] * 60 / 30)
-        intervals = ((i, range(i * 30 * 1000, (i + 1) * 30 * 1000))
-                     for i in range(interval_count))
-
-        for index, interval in intervals:
-            subs = [sub.plaintext for sub in sub_file
-                    if sub.start in interval or sub.end in interval]
-            # Don't index empty intervals
-            if not subs:
-                continue
-
-            interval_text = " ".join(subs)
-
-            interval_dir = self.embeddings_dir / str(index)
-            if not interval_dir.exists():
-                interval_dir.mkdir(parents=True, exist_ok=True)
-            text_file = interval_dir / f"{epi_str}.txt"
-            if not text_file.exists():
-                with open(text_file, "w") as text_out:
-                    text_out.write(interval_text)
-
-            embeddings_file = interval_dir / f"{epi_str}.npy"
-            if not embeddings_file.exists():
-                embeddings = self.model.encode_document(interval_text)
-                np.save(embeddings_file, embeddings)
+        self.embedding_store.index_series(self.build_interval_index)
 
     def build_interval_index(self, interval_dir: Path):
         embeddings = list(interval_dir.glob("*.npy"))
         embeddings.sort(key=lambda f: f.stem)
 
-        index_directory = {index: episode_tuple(f.stem)
+        index_directory = {index: EpisodeKey.from_str(f.stem)
                             for index, f in enumerate(embeddings)}
 
         interval = interval_dir.stem
@@ -139,7 +56,7 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
 
         # we're already parallelizing the build, so don't use more threads'
         index.build(50, n_jobs=1)
-        index.save(str(self.index_dir / f"{interval}.ann"))
+        index.save(str(self.index_dir / f"{interval}.idx"))
         index.unload()
 
 class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
@@ -180,11 +97,11 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                           f" Use mkv-episode-matcher index-subs to build indexes")
 
         intervals = [int(file.stem) for file in self.index_dir.iterdir()
-                     if file.is_file() and file.suffix == ".ann"]
+                     if file.is_file() and file.suffix == ".idx"]
         return {interval: self.get_index(interval) for interval in intervals}
 
     def get_index(self, interval: int) -> tuple[dict[int, EpisodeKey], AnnoyIndex] | None:
-        index_file = self.index_dir / f"{interval}.ann"
+        index_file = self.index_dir / f"{interval}.idx"
         directory_file = self.index_dir / f"{interval}.json"
         if not (index_file.exists() and directory_file.exists()):
             # This might happen if there's a mismatch between the video file
