@@ -1,4 +1,5 @@
 # __main__.py (enhanced version)
+import os
 import sys
 
 from loguru import logger
@@ -6,6 +7,15 @@ from rich.console import Console
 
 from mkv_episode_matcher.args import build_args_parser
 from mkv_episode_matcher.config import CONFIG_DIR, get_config
+
+# Disable Hugging Face tokenizers' internal multithreading. This is a transitive
+# dependency of SentenceTransformers used for embedding, and the original Whisper
+# implementation.
+# This avoids "process just got forked" warnings and potential deadlocks
+# when the program forks subprocesses (e.g., ffmpeg, whisper-cli).
+# The text volume tokenized here is small, so parallelism offers little benefit.
+# Performance impact has not been formally benchmarked but is expected to be negligible
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # Initialize rich console for better output
 console = Console()
