@@ -17,10 +17,6 @@ def test_get_random_segments_uses_transcriber(monkeypatch):
     extract_calls = []
 
     class DummyAudioChunkExtractor:
-        @staticmethod
-        def get_video_duration(_):
-            return 400
-
         def __enter__(self):
             return self
 
@@ -33,6 +29,7 @@ def test_get_random_segments_uses_transcriber(monkeypatch):
 
     monkeypatch.setattr(tse, "AudioChunkExtractor", DummyAudioChunkExtractor)
     monkeypatch.setattr(tse.random, "sample", lambda population, k: [1, 3][:k])
+    monkeypatch.setattr(tse.get_video_duration, "get_video_duration", lambda _: 400)
 
     transcriber = DummyTranscriber()
     extractor = tse.TextSegmentExtractor("tiny", transcriber=transcriber)
@@ -49,10 +46,6 @@ def test_get_random_segments_uses_transcriber(monkeypatch):
 
 def test_get_text_segments_returns_indexed_text(monkeypatch):
     class DummyAudioChunkExtractor:
-        @staticmethod
-        def get_video_duration(_):
-            return 80
-
         def __enter__(self):
             return self
 
@@ -64,6 +57,7 @@ def test_get_text_segments_returns_indexed_text(monkeypatch):
 
     monkeypatch.setattr(tse, "AudioChunkExtractor", DummyAudioChunkExtractor)
     monkeypatch.setattr(tse.random, "sample", lambda population, k: list(population)[:k])
+    monkeypatch.setattr(tse.get_video_duration, "get_video_duration", lambda _: 80)
 
     class TextReturningTranscriber:
         def transcribe(self, audio_path):

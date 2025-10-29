@@ -1,10 +1,8 @@
-import os
 import subprocess
 import tempfile
 from pathlib import Path
 from typing import ContextManager
 
-import numpy as np
 from loguru import logger
 
 
@@ -14,25 +12,6 @@ class AudioChunkExtractor(ContextManager):
         self.temp_dir.mkdir(exist_ok=True)
 
         self.audio_chunks = set()
-
-    @staticmethod
-    def get_video_duration(file: Path):
-        env = os.environ.copy()
-        env["TOKENIZERS_PARALLELISM"] = "false"
-
-        duration = float(
-            subprocess.check_output([
-                "ffprobe",
-                "-v",
-                "error",
-                "-show_entries",
-                "format=duration",
-                "-of",
-                "default=noprint_wrappers=1:nokey=1",
-                file,
-            ], env=env).decode()
-        )
-        return int(np.ceil(duration))
 
     def extract(self, file: Path, start_time: int, duration: int) -> Path:
 
