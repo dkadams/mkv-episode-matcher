@@ -6,32 +6,25 @@ import numpy as np
 from loguru import logger
 from rich.console import Console
 
+from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
+    AbstractSubtitleIndexWriter
 from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.embedding_model import EmbeddingModel, SentenceTransformerModel
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.subtitle_index_helper import SubtitleIndexHelper
 
 console = Console()
 
 
-class HnswlibSubtitleIndex:
-    def __init__(self, config, series: Series):
-        self.config = config
-        self.series = series
-
-        self.index_dir = series.index_dir / "hnswlib.index"
-        self.embedding_model: EmbeddingModel = SentenceTransformerModel()
-
-class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex):
+class HnswlibSubtitleIndex(AbstractSubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
-        self.embedding_store = SubtitleIndexHelper(
-            config, series, self.index_dir, self.embedding_model
-        )
 
-    def index_series(self):
-        self.embedding_store.index_series(self.build_interval_index)
+    @property
+    def index_dir(self):
+        return self.series.index_dir / "hnswlib.index"
+
+
+class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex, AbstractSubtitleIndexWriter):
 
     def build_interval_index(self, interval_dir: Path):
         embedding_files = list(interval_dir.glob("*.npy"))

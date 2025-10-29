@@ -10,29 +10,20 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.embedding_model import EmbeddingModel, SentenceTransformerModel
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.subtitle_index_helper import SubtitleIndexHelper
+from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
+    AbstractSubtitleIndexWriter
 
 console = Console()
 
-class AnnoySubtitleIndex:
-    def __init__(self, config, series: Series):
-        self.config = config
-        self.series = series
-
-        self.index_dir = series.index_dir / "annoy.index"
-        self.embedding_model: EmbeddingModel = SentenceTransformerModel()
-
-class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
+class AnnoySubtitleIndex(AbstractSubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
 
-        self.embedding_store = SubtitleIndexHelper(
-            config, series, self.index_dir, self.embedding_model
-        )
+    @property
+    def index_dir(self):
+        return self.series.index_dir / "annoy.index"
 
-    def index_series(self):
-        self.embedding_store.index_series(self.build_interval_index)
-
+class AnnoySubtitleIndexWriter(AnnoySubtitleIndex, AbstractSubtitleIndexWriter):
     def build_interval_index(self, interval_dir: Path):
         embeddings = list(interval_dir.glob("*.npy"))
         embeddings.sort(key=lambda f: f.stem)

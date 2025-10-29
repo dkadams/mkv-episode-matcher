@@ -1,8 +1,8 @@
 import math
+from abc import ABC, abstractmethod
 from concurrent.futures import Executor
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable
 
 import numpy as np
 import pysubs2
@@ -12,33 +12,22 @@ from rich.console import Console
 from rich.progress import Progress
 
 from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.embedding_model import SentenceTransformerModel
 from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.embedding_model import EmbeddingModel
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
 
-class SubtitleIndexHelper:
-    """Shared helper for extracting and caching subtitle embeddings."""
+class AbstractSubtitleIndex(ABC):
+    """Base class for indexes that manually manage embeddings."""
 
-    def __init__(
-        self,
-        config: Configuration,
-        series: Series,
-        index_dir: Path,
-        embedding_model: EmbeddingModel,
-        interval_seconds: int = 30,
-    ):
+    def __init__(self, config: Configuration, series: Series):
         self.config = config
         self.series = series
-        # This is the index directory for the specific index type:
-        # "{series.index_dir}/hnswlib.index" or "{series.index_dir}/annoy.index".
-        self.index_dir = index_dir
-        self.index_dir.mkdir(parents=True, exist_ok=True)
 
-        self.embedding_model = embedding_model
-        self.interval_seconds = interval_seconds
-        self.interval_ms = interval_seconds * 1000
+        self.embedding_model = SentenceTransformerModel()
+        self.interval_seconds = 30
+        self.interval_ms = self.interval_seconds * 1000
 
         # Embeddings are shared across multiple index types, so they are stored
         # in the series index directory.
@@ -50,7 +39,17 @@ class SubtitleIndexHelper:
         self.model_dir = embeddings_dir / self.embedding_model.dir_name()
         self.model_dir.mkdir(parents=True, exist_ok=True)
 
-    def index_series(self, build_interval_index: Callable[[Path], None]):
+    @property
+    @abstractmethod
+    def index_dir(self):
+        pass
+
+class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
+    @abstractmethod
+    def build_interval_index(self, interval_dir: Path):
+        pass
+
+    def index_series(self):
         logger.info(f"SubtitleEmbeddingProcessor: Indexing: {self.series.name} ({self.series.dir})")
 
         with Progress() as progress, ThreadPoolExecutor(max_workers=10) as executor:
@@ -64,7 +63,7 @@ class SubtitleIndexHelper:
 
             self.extract_embeddings(executor, progress)
 
-            self.build_index(executor, progress, build_interval_index)
+            self.build_index(executor, progress)
 
     def delete_embeddings_files(self, progress: Progress):
         logger.info(f"Removing embeddings for: {self.series.name}, "
@@ -186,14 +185,14 @@ class SubtitleIndexHelper:
             ]
             if not subs:
                 interval_text = None
+            else:
+                interval_text = " ".join(subs)
+                with open(text_file, "w") as text_out:
+                    text_out.write(interval_text)
 
-            interval_text = " ".join(subs)
-            with open(text_file, "w") as text_out:
-                text_out.write(interval_text)
         return interval_text
 
-    def build_index(self, executor: Executor, progress: Progress,
-            build_interval_index: Callable[[Path], None]):
+    def build_index(self, executor: Executor, progress: Progress):
         logger.info(f"Building indexes for: {self.series.name}, "
                     f"model: {self.embedding_model}")
 
@@ -208,7 +207,7 @@ class SubtitleIndexHelper:
 
         def index_interval(dir):
             logger.info(f"Indexing {dir}")
-            build_interval_index(dir)
+            self.build_interval_index(dir)
             progress.update(index_progress, advance=1)
 
         list(executor.map(index_interval, interval_dirs))
