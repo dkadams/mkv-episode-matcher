@@ -1,15 +1,17 @@
 import itertools
+from datetime import timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from rich.console import Console
 from rich.table import Table
 
 from mkv_episode_matcher.config import Configuration
-from mkv_episode_matcher.episode import episode_str, EpisodeKey
+from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import IndexedEpisodeMatcher, \
     MatchResult, Match
 from mkv_episode_matcher.series import get_series, Series, get_seasons_by_number
+from mkv_episode_matcher.video_helper import get_video_duration
 
 console = Console()
 
@@ -49,7 +51,7 @@ def display_results_by_file(series: Series, results: List[MatchResult]):
     for result in results:
         if result.known_episode:
             known_episode_count += 1
-            actual = episode_str(*result.known_episode)
+            actual = str(result.known_episode)
             correct_match = (len(result.matches) > 0
                              and result.known_episode == result.matches[0].episode)
             if correct_match:
@@ -97,13 +99,18 @@ def display_results_by_episode(series: Series, results: List[MatchResult]):
 
     for episode, matches in matches_by_episode.items():
         if len(matches) == 0:
-            console.print(f"[bold red]No matches found for {episode_str(*episode)}")
+            console.print(f"[bold red]No matches found for {episode}")
         else:
             match_table = Table(title=f"{str(episode)}")
             match_table.add_column("File")
             match_table.add_column("Score")
-            for file, match in matches:
-                match_table.add_row(str(file), str(match.score))
+            match_table.add_column("File Duration")
+            for file, match in matches[:5]:
+                duration = get_video_duration(file)
+                match_table.add_row(str(file),
+                                    str(match.score),
+                                    str(timedelta(seconds=duration))
+                                    )
             console.print(match_table)
 
 def get_matches_by_episode(results: list[MatchResult],
@@ -112,7 +119,6 @@ def get_matches_by_episode(results: list[MatchResult],
            for season in sorted(get_seasons_by_number(series).values())
            for episode in sorted(season.episodes.values())}
 
-    matches_by_episode = {}
     for result in results:
         for match in result.matches:
             matches = matches_by_episode.setdefault(match.key(), [])
