@@ -2,7 +2,7 @@ import math
 from concurrent.futures import Executor
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 import numpy as np
 import pysubs2
@@ -13,6 +13,7 @@ from rich.progress import Progress
 
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.embedding_model import EmbeddingModel
 from mkv_episode_matcher.series import Series, get_specified_episodes
 
 console = Console()
@@ -25,7 +26,7 @@ class SubtitleIndexHelper:
         config: Configuration,
         series: Series,
         index_dir: Path,
-        model: Any,
+        embedding_model: EmbeddingModel,
         interval_seconds: int = 30,
     ):
         self.config = config
@@ -35,7 +36,7 @@ class SubtitleIndexHelper:
         self.index_dir = index_dir
         self.index_dir.mkdir(parents=True, exist_ok=True)
 
-        self.model = model
+        self.embedding_model = embedding_model
         self.interval_seconds = interval_seconds
         self.interval_ms = interval_seconds * 1000
 
@@ -154,7 +155,7 @@ class SubtitleIndexHelper:
 
             if embeddings_file.exists():
                 continue
-            embeddings = self.model.encode_document(interval_text)
+            embeddings = self.embedding_model.encode_document(interval_text)
             np.save(embeddings_file, embeddings.astype(np.float32))
 
         logger.info(f"Extracted embeddings for episode: {self.series.name} episode: {episode}")

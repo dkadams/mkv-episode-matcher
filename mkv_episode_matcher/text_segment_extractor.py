@@ -173,7 +173,10 @@ class TextSegmentExtractor:
         chunks_per_file = math.ceil(total_duration / duration)
         count = min(chunks_per_file, count)
 
-        # TODO bias this towards the middle of the file
+        # use a fixed seed so that we choose the same chunks for each file
+        random.seed(12345)
+
+        # TODO bias this towards the middle of the file?
         chunk_indexes = random.sample(range(chunks_per_file), count)
 
         results = []

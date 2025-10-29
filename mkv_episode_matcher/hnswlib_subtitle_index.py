@@ -5,13 +5,12 @@ import hnswlib
 import numpy as np
 from loguru import logger
 from rich.console import Console
-from sentence_transformers import SentenceTransformer
 
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.embedding_model import EmbeddingModel, SentenceTransformerModel
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.subtitle_index_helper import \
-    SubtitleIndexHelper
+from mkv_episode_matcher.subtitle_index_helper import SubtitleIndexHelper
 
 console = Console()
 
@@ -22,14 +21,14 @@ class HnswlibSubtitleIndex:
         self.series = series
 
         self.index_dir = series.index_dir / "hnswlib.index"
-        self.model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
+        self.embedding_model: EmbeddingModel = SentenceTransformerModel()
 
 class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
-        self.embedding_store = SubtitleIndexHelper(config, series,
-                                                   self.index_dir,
-                                                   self.model)
+        self.embedding_store = SubtitleIndexHelper(
+            config, series, self.index_dir, self.embedding_model
+        )
 
     def index_series(self):
         self.embedding_store.index_series(self.build_interval_index)
@@ -49,7 +48,7 @@ class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex):
         with open(self.index_dir / f"{interval}.json", "w") as json_out:
             json.dump(index_directory, json_out)
 
-        dim = self.model.get_sentence_embedding_dimension()
+        dim = self.embedding_model.get_sentence_embedding_dimension()
         index = hnswlib.Index(space="cosine", dim=dim)
         index.init_index(max_elements=len(embedding_files), ef_construction=200, M=16)
 
@@ -95,7 +94,7 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                 )
                 continue
 
-            query = self.model.encode_query(text).astype(np.float32)
+            query = self.embedding_model.encode_query(text).astype(np.float32)
             labels, distances = index.knn_query(query, k=neighbor_count,
                                                 num_threads=1, filter=None)
             ids = labels[0]
@@ -142,7 +141,7 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
             return None
 
         logger.info(f"Loading index for interval: {interval}: {index_file}")
-        dim = self.model.get_sentence_embedding_dimension()
+        dim = self.embedding_model.get_sentence_embedding_dimension()
         index = hnswlib.Index(space="cosine", dim=dim)
         with open(directory_file, "r") as json_in:
             data = json.load(json_in)

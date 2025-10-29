@@ -5,13 +5,12 @@ import numpy as np
 from annoy import AnnoyIndex
 from loguru import logger
 from rich.console import Console
-from sentence_transformers import SentenceTransformer
 
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.embedding_model import EmbeddingModel, SentenceTransformerModel
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.subtitle_index_helper import \
-    SubtitleIndexHelper
+from mkv_episode_matcher.subtitle_index_helper import SubtitleIndexHelper
 
 console = Console()
 
@@ -21,15 +20,15 @@ class AnnoySubtitleIndex:
         self.series = series
 
         self.index_dir = series.index_dir / "annoy.index"
-        self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        self.embedding_model: EmbeddingModel = SentenceTransformerModel()
 
 class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
 
-        self.embedding_store = SubtitleIndexHelper(config, series,
-                                                   self.index_dir,
-                                                   self.model)
+        self.embedding_store = SubtitleIndexHelper(
+            config, series, self.index_dir, self.embedding_model
+        )
 
     def index_series(self):
         self.embedding_store.index_series(self.build_interval_index)
@@ -45,7 +44,7 @@ class AnnoySubtitleIndexWriter(AnnoySubtitleIndex):
         with open(self.index_dir / f"{interval}.json", "w") as json_out:
             json.dump(index_directory, json_out)
 
-        index = AnnoyIndex(self.model.get_sentence_embedding_dimension(),
+        index = AnnoyIndex(self.embedding_model.get_sentence_embedding_dimension(),
                            "angular")
         for episode_index, file in enumerate(embeddings):
             with open(file, "rb") as f:
@@ -74,7 +73,7 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                 continue
 
             directory, index = index_entry
-            query = self.model.encode_query(text)
+            query = self.embedding_model.encode_query(text)
             ids, distances = index.get_nns_by_vector(query, 5, include_distances=True)
             logger.info(f"Query: {interval} -> {ids} -> {distances}")
             for id, distance in zip(ids, distances):
@@ -112,7 +111,7 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
             return None
 
         logger.info(f"Loading index for interval: {interval}: {index_file}")
-        index = AnnoyIndex(self.model.get_sentence_embedding_dimension(), "angular")
+        index = AnnoyIndex(self.embedding_model.get_sentence_embedding_dimension(), "angular")
         index.load(str(index_file))
         logger.info(f"Loading directory for interval: {interval}: {directory_file}")
         with open(directory_file, "r") as json_in:
