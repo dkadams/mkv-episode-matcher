@@ -73,7 +73,7 @@ class OpenSubtitlesDownloader:
         # what's selected here.
         selected_subtitle = subtitles[0]
 
-        srt_filename = f"{self.series.name} - {episode.short_str()}.srt"
+        srt_filename = f"{episode.short_str()}.srt"
         srt_filepath = self.series.subtitles_dir / srt_filename
 
         srt_file = self.client.download_and_save(selected_subtitle)
