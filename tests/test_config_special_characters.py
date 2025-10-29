@@ -1,6 +1,7 @@
 """Test cases for config.py handling of special characters in passwords."""
 
 import tempfile
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -40,14 +41,13 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             password_with_percent,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
         # Verify the config was written successfully
-        config = _get_config(temp_config_file)
+        config = _get_config(temp_config_file, Namespace())
         assert config is not None
-        assert config["open_subtitles_password"] == password_with_percent
+        assert config.stored.get("api", "open_subtitles_password") == password_with_percent
 
     def test_password_with_multiple_percent_symbols(self, temp_config_file, mock_config_data):
         """Test that passwords with multiple % symbols work correctly."""
@@ -59,12 +59,11 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             password_with_percents,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
-        config = _get_config(temp_config_file)
-        assert config["open_subtitles_password"] == password_with_percents
+        config = _get_config(temp_config_file, Namespace())
+        assert config.stored.get("api", "open_subtitles_password") == password_with_percents
 
     def test_password_with_interpolation_like_syntax(self, temp_config_file, mock_config_data):
         """Test that passwords resembling interpolation syntax are handled correctly."""
@@ -77,12 +76,11 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             password_with_interpolation,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
-        config = _get_config(temp_config_file)
-        assert config["open_subtitles_password"] == password_with_interpolation
+        config = _get_config(temp_config_file, Namespace())
+        assert config.stored.get("api", "open_subtitles_password") == password_with_interpolation
 
     def test_password_with_various_special_characters(self, temp_config_file, mock_config_data):
         """Test that passwords with various special characters work correctly."""
@@ -102,12 +100,11 @@ class TestConfigSpecialCharacters:
                 mock_config_data["open_subtitles_user_agent"],
                 mock_config_data["open_subtitles_username"],
                 password,
-                mock_config_data["show_dir"],
-                temp_config_file,
+                    temp_config_file,
             )
             
-            config = _get_config(temp_config_file)
-            assert config["open_subtitles_password"] == password, f"Failed for password: {password}"
+            config = _get_config(temp_config_file, Namespace())
+            assert config.stored.get("api", "open_subtitles_password") == password, f"Failed for password: {password}"
 
     def test_original_bug_case(self, temp_config_file, mock_config_data):
         """Test the specific password from the original bug report."""
@@ -122,19 +119,17 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             problematic_password,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
         # Verify we can read it back correctly
-        config = _get_config(temp_config_file)
+        config = _get_config(temp_config_file, Namespace())
         assert config is not None
-        assert config["open_subtitles_password"] == problematic_password
+        assert config.stored.get("api", "open_subtitles_password") == problematic_password
         
         # Verify all other fields are preserved
-        assert config["tmdb_api_key"] == mock_config_data["tmdb_api_key"]
-        assert config["open_subtitles_username"] == mock_config_data["open_subtitles_username"]
-        assert config["show_dir"] == mock_config_data["show_dir"]
+        assert config.stored.get("api","tmdb_api_key") == mock_config_data["tmdb_api_key"]
+        assert config.stored.get("api","open_subtitles_username") == mock_config_data["open_subtitles_username"]
 
     def test_empty_password(self, temp_config_file, mock_config_data):
         """Test that empty passwords are handled correctly."""
@@ -146,12 +141,11 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             empty_password,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
-        config = _get_config(temp_config_file)
-        assert config["open_subtitles_password"] == empty_password
+        config = _get_config(temp_config_file, Namespace())
+        assert config.stored.get("api", "open_subtitles_password") == empty_password
 
     def test_config_persistence(self, temp_config_file, mock_config_data):
         """Test that config values persist correctly across multiple operations."""
@@ -164,11 +158,10 @@ class TestConfigSpecialCharacters:
             mock_config_data["open_subtitles_user_agent"],
             mock_config_data["open_subtitles_username"],
             password,
-            mock_config_data["show_dir"],
             temp_config_file,
         )
         
         # Read config multiple times to ensure consistency
         for _ in range(3):
-            config = _get_config(temp_config_file)
-            assert config["open_subtitles_password"] == password
+            config = _get_config(temp_config_file, Namespace())
+            assert config.stored.get("api", "open_subtitles_password") == password

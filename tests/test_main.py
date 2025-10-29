@@ -78,11 +78,11 @@ class TestConfiguration:
     def test_set_config(self, tmp_path, mock_config):
         config_file = tmp_path / "config.ini"
         store_api_config(
-            mock_config["tmdb_api_key"],
-            mock_config["open_subtitles_api_key"],
-            mock_config["open_subtitles_user_agent"],
-            mock_config["open_subtitles_username"],
-            mock_config["open_subtitles_password"],
+            mock_config.stored.get("api", "tmdb_api_key"),
+            mock_config.stored.get("api", "open_subtitles_api_key"),
+            mock_config.stored.get("api", "open_subtitles_user_agent"),
+            mock_config.stored.get("api", "open_subtitles_username"),
+            mock_config.stored.get("api", "open_subtitles_password"),
             str(config_file),
         )
         assert config_file.exists()
@@ -90,16 +90,16 @@ class TestConfiguration:
     def test_get_config(self, tmp_path, mock_config):
         config_file = tmp_path / "config.ini"
         store_api_config(
-            mock_config["tmdb_api_key"],
-            mock_config["open_subtitles_api_key"],
-            mock_config["open_subtitles_user_agent"],
-            mock_config["open_subtitles_username"],
-            mock_config["open_subtitles_password"],
+            mock_config.stored.get("api", "tmdb_api_key"),
+            mock_config.stored.get("api", "open_subtitles_api_key"),
+            mock_config.stored.get("api", "open_subtitles_user_agent"),
+            mock_config.stored.get("api", "open_subtitles_username"),
+            mock_config.stored.get("api", "open_subtitles_password"),
             str(config_file),
         )
         config = _get_config(str(config_file), argparse.Namespace())
-        assert config.stored["api"]["tmdb_api_key"] == mock_config.stored["tmdb_api_key"]
-        assert config.stored["api"]["open_subtitles_api_key"] == mock_config.stored["open_subtitles_api_key"]
+        assert config.stored.get("api", "tmdb_api_key") == mock_config.stored.get("api", "tmdb_api_key")
+        assert config.stored.get("api", "open_subtitles_api_key") == mock_config.stored.get("api", "open_subtitles_api_key")
 
 
 class TestEpisodeMatcher:
@@ -113,7 +113,7 @@ class TestEpisodeMatcher:
         assert extract_season_episode("invalid.mkv") == (None, None)
 
     @patch("mkv_episode_matcher.tmdb_client.requests.get")
-    def test_fetch_show_id(self, mock_get):
+    def test_fetch_show_id(self, mock_get, mock_config: Configuration):
         from mkv_episode_matcher.tmdb_client import search_series
 
         mock_response = Mock()
@@ -121,7 +121,7 @@ class TestEpisodeMatcher:
         mock_response.json.return_value = {"results": [{"id": 12345}]}
         mock_get.return_value = mock_response
 
-        assert search_series(mock_config(), "Test Show") == {"results": [{"id": 12345}]}
+        assert search_series(mock_config, "Test Show") == {"results": [{"id": 12345}]}
 
 
 if __name__ == "__main__":
