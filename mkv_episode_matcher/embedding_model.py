@@ -14,6 +14,8 @@ class EmbeddingModel(Protocol):
 
     def get_sentence_embedding_dimension(self) -> int: ...
 
+    def dir_name(self) -> str: ...
+
 
 class SentenceTransformerModel:
     """EmbeddingModel implementation backed by SentenceTransformer."""
@@ -29,3 +31,6 @@ class SentenceTransformerModel:
 
     def get_sentence_embedding_dimension(self) -> int:
         return self._model.get_sentence_embedding_dimension()
+
+    def dir_name(self) -> str:
+        return f"hfst-{self._model.model_card_data.model_name}"

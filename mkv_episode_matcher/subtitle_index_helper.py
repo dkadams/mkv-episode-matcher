@@ -42,8 +42,13 @@ class SubtitleIndexHelper:
 
         # Embeddings are shared across multiple index types, so they are stored
         # in the series index directory.
-        self.embeddings_dir = series.index_dir / "embeddings"
-        self.embeddings_dir.mkdir(parents=True, exist_ok=True)
+        embeddings_dir = series.index_dir / "embeddings"
+
+        self.text_dir = embeddings_dir / "text"
+        self.text_dir.mkdir(parents=True, exist_ok=True)
+
+        self.model_dir = embeddings_dir / self.embedding_model.dir_name()
+        self.model_dir.mkdir(parents=True, exist_ok=True)
 
     def index_series(self, build_interval_index: Callable[[Path], None]):
         logger.info(f"SubtitleEmbeddingProcessor: Indexing: {self.series.name} ({self.series.dir})")
@@ -63,22 +68,28 @@ class SubtitleIndexHelper:
 
     def delete_embeddings_files(self, progress: Progress):
         logger.info(f"Removing embeddings for: {self.series.name}, "
-                        f"deleting: {self.embeddings_dir}")
+                    f"model: {self.embedding_model}. "
+                    f"Deleting: {self.text_dir} and {self.model_dir}")
 
-        embedding_files = [file for file in self.embeddings_dir.rglob("*")
-                            if file.suffix in {".npy", ".txt"}
-                            and file.is_file()]
-        embedding_dirs = [dir for dir in self.embeddings_dir.iterdir()
-                          if dir.is_dir()]
+        def files(path: Path, ext: str) -> list[Path]:
+            return [file for file in path.rglob("*")
+                    if file.suffix == ext and file.is_file()]
+        def dirs(path: Path) -> list[Path]:
+            return [dir for dir in path.iterdir()
+                    if dir.is_dir()]
+
+        files_to_delete = (files(self.text_dir, ".txt")
+                           + files(self.model_dir, ".npy"))
+        dirs_to_delete = dirs(self.text_dir) + dirs(self.model_dir)
 
         delete_progress = progress.add_task(
             f"Removing embeddings for: {self.series.name}",
-            total=len(embedding_files) + len(embedding_dirs))
+            total=len(files_to_delete) + len(dirs_to_delete))
 
-        for embedding_file in embedding_files:
+        for embedding_file in files_to_delete:
             embedding_file.unlink()
             progress.update(delete_progress, advance=1)
-        for interval_dir in embedding_dirs:
+        for interval_dir in dirs_to_delete:
             interval_dir.rmdir()
             progress.update(delete_progress, advance=1)
 
@@ -139,13 +150,10 @@ class SubtitleIndexHelper:
         )
 
         for index, interval in intervals:
-            interval_dir = self.embeddings_dir / str(index)
-            interval_dir.mkdir(parents=True, exist_ok=True)
-
-            text_file = interval_dir / f"{episode}.txt"
-            embeddings_file = interval_dir / f"{episode}.npy"
+            text_file = self._get_text_dir(index) / f"{episode}.txt"
+            embeddings_file = self._get_model_dir(index) / f"{episode}.npy"
             if text_file.exists() and embeddings_file.exists():
-                logger.info(f"Skipping interval: {interval} for episode: {episode}. Embeddings .txt & .npy already exist. ")
+                logger.info(f"Skipping interval: {interval} for episode: {episode}: .txt & .npy already exist. ")
                 continue
 
             interval_text = self.extract_interval_text(interval, sub_file,
@@ -154,7 +162,9 @@ class SubtitleIndexHelper:
                 continue
 
             if embeddings_file.exists():
+                logger.info(f"Skipping interval: {interval} for episode: {episode}: .npy already exist. ")
                 continue
+
             embeddings = self.embedding_model.encode_document(interval_text)
             np.save(embeddings_file, embeddings.astype(np.float32))
 
@@ -184,9 +194,10 @@ class SubtitleIndexHelper:
 
     def build_index(self, executor: Executor, progress: Progress,
             build_interval_index: Callable[[Path], None]):
-        logger.info(f"Building indexes for: {self.series.name}")
+        logger.info(f"Building indexes for: {self.series.name}, "
+                    f"model: {self.embedding_model}")
 
-        interval_dirs = [dir for dir in self.embeddings_dir.iterdir()
+        interval_dirs = [dir for dir in self.model_dir.iterdir()
                          if dir.is_dir()]
         if not interval_dirs:
             console.print(f"[red]No embedding dirs found for series: {self.series.name}.")
@@ -202,3 +213,14 @@ class SubtitleIndexHelper:
 
         list(executor.map(index_interval, interval_dirs))
         progress.remove_task(index_progress)
+
+    def _get_text_dir(self, index: int) -> Path:
+        dir = self.text_dir / str(index)
+        dir.mkdir(parents=True, exist_ok=True)
+        return dir
+
+    def _get_model_dir(self, index: int) -> Path:
+        dir = self.model_dir / str(index)
+        dir.mkdir(parents=True, exist_ok=True)
+        return dir
+
