@@ -1,100 +1,127 @@
-import math
-from concurrent.futures.thread import ThreadPoolExecutor
+import shutil
+from pathlib import Path
 
 import chromadb
-import pysubs2
+import numpy as np
 from loguru import logger
 from rich.console import Console
-from rich.progress import Progress
 
+from mkv_episode_matcher.abstract_subtitle_index import (
+    AbstractSubtitleIndex,
+    AbstractSubtitleIndexWriter,
+)
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
-from mkv_episode_matcher.series import Series, get_specified_episodes
+from mkv_episode_matcher.series import Series
 
 console = Console()
 
-class ChromaSubtitleIndex:
+
+class ChromaSubtitleIndex(AbstractSubtitleIndex):
+    COLLECTION_NAME = "intervals"
+
     def __init__(self, config, series: Series):
-        self.config = config
-        self.series = series
+        super().__init__(config, series)
+        self.index_dir.mkdir(parents=True, exist_ok=True)
+        self.client = chromadb.PersistentClient(path=str(self.index_dir))
+        self.collection = self._ensure_collection()
 
-        self.index_dir = series.index_dir / "chroma.index"
-        self.chromadb = chromadb.PersistentClient(path=self.index_dir)
+    @property
+    def index_dir(self):
+        return self.series.index_dir / "chroma.index"
 
-        self.intervals = self.chromadb.get_or_create_collection(name="intervals",
-                                                               metadata={"hnsw:space": "cosine"})
+    def _ensure_collection(self):
+        return self.client.get_or_create_collection(
+            name=self.COLLECTION_NAME,
+            metadata={"hnsw:space": "cosine"},
+        )
 
-class ChromaSubtitleIndexWriter(ChromaSubtitleIndex):
-    def index_series(self):
-        episodes = {(ep.season_number, ep.episode_number)
-                    for ep in get_specified_episodes(self.config, self.series)}
 
-        subtitle_files = list(self.series.dir.rglob("*.srt"))
+class ChromaSubtitleIndexWriter(ChromaSubtitleIndex, AbstractSubtitleIndexWriter):
+    def delete_index_files(self, progress):
+        logger.info(
+            f"Removing Chroma collection for: {self.series.name}, "
+            f"deleting: {self.index_dir}"
+        )
+        self.client.delete_collection(self.COLLECTION_NAME)
 
-        with Progress() as progress, ThreadPoolExecutor(max_workers=10) as executor:
-            task = progress.add_task(f"Indexing {self.series.name} ({self.series.dir})",
-                                     total=len(subtitle_files))
+        # Recreate an empty collection for subsequent indexing.
+        self.collection = self._ensure_collection()
 
-            def index_file(file):
-                logger.info(f"Indexing: {file}")
-                episode = EpisodeKey.from_path(file)
-                logger.info(f"Identified: {file} as episode: {episode}")
-                if episode in episodes:
-                    logger.info(f"Indexing: {file} as episode: {episode}")
-                    self.index_episode(file, episode)
-                progress.update(task, advance=1)
+    def build_interval_index(self, interval_dir: Path):
+        embedding_files = sorted(interval_dir.glob("*.npy"), key=lambda f: f.stem)
+        if not embedding_files:
+            logger.warning(f"No embeddings found for interval dir: {interval_dir}")
+            return
 
-            list(executor.map(index_file, subtitle_files))
+        interval = int(interval_dir.stem)
+        logger.info(f"Upserting Chroma embeddings for interval: {interval}")
 
-    def index_episode(self, path, episode: EpisodeKey):
-        logger.info(f"Indexing episode: {self.series.name} episode: {episode}")
+        ids: list[str] = []
+        embeddings: list[list[float]] = []
+        metadatas: list[dict[str, int]] = []
 
-        sub_file = pysubs2.load(path, format_="srt")
+        for embedding_path in embedding_files:
+            vector = np.load(embedding_path).astype(np.float32)
+            episode = EpisodeKey.from_str(embedding_path.stem)
+            ids.append(f"{interval}:{episode.season_number}:{episode.episode_number}")
+            embeddings.append(vector.tolist())
+            metadatas.append(
+                {
+                    "season_number": episode.season_number,
+                    "episode_number": episode.episode_number,
+                    "interval": interval,
+                }
+            )
 
-        metadata = self.series.get_episode_detail(episode)
-        interval_count = math.ceil(metadata["runtime"] * 60 / 30)
-        intervals = (range(i * 30 * 1000, (i + 1) * 30 * 1000)
-                     for i in range(interval_count))
-        ids = []
-        documents = []
-        metadatas = []
-        for interval in intervals:
-            subs = [sub.plaintext for sub in sub_file
-                    if sub.start in interval or sub.end in interval]
-
-            ids.append(f"{str(path)}:{interval.start}:{interval.stop}")
-            documents.append("\n".join(subs))
-            sub_metadata = metadata.copy()
-            sub_metadata["start_ms"] = interval.start
-            sub_metadata["end_ms"] = interval.stop
-            metadatas.append(sub_metadata)
-        self.intervals.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        # Ensure stale entries for the interval are cleared before inserting.
+        self.collection.delete(where={"interval": interval})
+        self.collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas)
 
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
     def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
         scores_by_episode: dict[EpisodeKey, Score] = {}
+
         for interval, text in text_segments:
-            start_ms = interval * 30 * 1000
-            result = self.intervals.query(query_texts=[text],
-                                          where={"start_ms": start_ms},
-                                          n_results=5,
-                                          include=["metadatas", "distances"])
+            query_vector = (
+                self.embedding_model.encode_query(text).astype(np.float32).tolist()
+            )
 
-            for md, distance in zip(result["metadatas"][0],
-                                    result["distances"][0]):
-                key = EpisodeKey(md["season_number"], md["episode_number"])
+            result = self.collection.query(
+                query_embeddings=[query_vector],
+                where={"interval": interval},
+                n_results=5,
+                include=["metadatas", "distances"],
+            )
 
-                cur = scores_by_episode.setdefault(key, Score(0, 1000000))
-                score = Score(cur.count + 1, min(cur.min_distance, distance))
-                scores_by_episode[key] = score
+            metadatas = result.get("metadatas") or []
+            distances = result.get("distances") or []
+            if not metadatas or not distances:
+                logger.warning(f"No Chroma results for interval: {interval}")
+                continue
 
+            for metadata, distance in zip(metadatas[0], distances[0]):
+                season = metadata.get("season_number")
+                episode = metadata.get("episode_number")
+                if season is None or episode is None:
+                    logger.warning(
+                        f"Chroma metadata missing episode information: {metadata}"
+                    )
+                    continue
 
-        ordered_ep_id = sorted(scores_by_episode,
-                               key=lambda k: scores_by_episode[k])
+                key = EpisodeKey(int(season), int(episode))
+                current = scores_by_episode.setdefault(key, Score(0, 1000000))
+                scores_by_episode[key] = Score(
+                    current.count + 1, min(current.min_distance, float(distance))
+                )
 
-        return [Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
-                for ep_id in ordered_ep_id[:5]] # only return the top 5 results
+        ordered_ep_id = sorted(scores_by_episode, key=lambda k: scores_by_episode[k])
+        return [
+            Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
+            for ep_id in ordered_ep_id[:5]
+        ]
+
 
 ChromaSubtitleIndex.reader_type = ChromaSubtitleIndexReader
 ChromaSubtitleIndex.writer_type = ChromaSubtitleIndexWriter

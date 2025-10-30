@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from typing import Protocol
+
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
@@ -21,16 +24,28 @@ class SentenceTransformerModel:
     """EmbeddingModel implementation backed by SentenceTransformer."""
 
     def __init__(self, model_name: str = DEFAULT_MODEL_NAME) -> None:
+        self.model_name = model_name
         self._model = SentenceTransformer(model_name)
 
     def encode_document(self, text: str) -> np.ndarray:
-        return np.asarray(self._model.encode_document(text))
+        return self._encode(text, method="encode_document")
 
     def encode_query(self, text: str) -> np.ndarray:
-        return np.asarray(self._model.encode_query(text))
+        return self._encode(text, method="encode_query")
 
     def get_sentence_embedding_dimension(self) -> int:
         return self._model.get_sentence_embedding_dimension()
 
     def dir_name(self) -> str:
-        return f"hfst-{self._model.model_card_data.model_name}"
+        return self.model_name.replace("/", "-")
+
+    def __str__(self) -> str:
+        return f"SentenceTransformerModel({self.model_name})"
+
+    def _encode(self, text: str, method: str) -> np.ndarray:
+        encoder = getattr(self._model, method, None)
+        if callable(encoder):
+            vector = encoder(text)
+        else:
+            vector = self._model.encode(text, convert_to_numpy=True)
+        return np.asarray(vector, dtype=np.float32)
