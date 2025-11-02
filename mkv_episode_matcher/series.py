@@ -67,8 +67,8 @@ class Series:
                              f"{self.name} "
                              f"episode: {episode}")
 
-        return {k: episode_detail[k] for k in keys
-                or ["id", "season_number", "episode_number", "runtime"]}
+        return {k: episode_detail.get(k, None) for k in (keys
+                or ["id", "season_number", "episode_number", "runtime"])}
 
 class SeriesDirectoryProcessor:
     def __init__(self, config: Configuration):

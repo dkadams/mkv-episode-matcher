@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 import numpy as np
@@ -6,12 +5,12 @@ from annoy import AnnoyIndex
 from loguru import logger
 from rich.console import Console
 
-from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.embedding_model import EmbeddingModel, SentenceTransformerModel
-from mkv_episode_matcher.indexed_episode_matcher import Match, Score
-from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
+from mkv_episode_matcher.embeddings_extractor import EmbeddingsExtractor
+from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.indexed_episode_matcher import Match, Score
+from mkv_episode_matcher.series import Series
 
 console = Console()
 
@@ -24,29 +23,19 @@ class AnnoySubtitleIndex(AbstractSubtitleIndex):
         return self.series.index_dir / "annoy.index"
 
 class AnnoySubtitleIndexWriter(AnnoySubtitleIndex, AbstractSubtitleIndexWriter):
-    def build_interval_index(self, interval_dir: Path):
-        embeddings = list(interval_dir.glob("*.npy"))
-        embeddings.sort(key=lambda f: f.stem)
+    def build_interval_index(self, embeddings_file: Path):
+        embedding_entries = np.load(embeddings_file)
 
-        index_directory = {index: EpisodeKey.from_str(f.stem)
-                            for index, f in enumerate(embeddings)}
-
-        interval = interval_dir.stem
-        with open(self.index_dir / f"{interval}.json", "w") as json_out:
-            json.dump(index_directory, json_out)
 
         index = AnnoyIndex(self.embedding_model.get_sentence_embedding_dimension(),
                            "angular")
-        for episode_index, file in enumerate(embeddings):
-            with open(file, "rb") as f:
-                embeddings = np.load(f)
-
-            logger.info(f"Indexing: {file} -> {interval}[{episode_index}]")
-            index.add_item(episode_index, embeddings)
+        for entry in embedding_entries:
+            index.add_item(entry["id"], entry["embedding"])
 
         # we're already parallelizing the build, so don't use more threads'
         index.build(50, n_jobs=1)
-        index.save(str(self.index_dir / f"{interval}.idx"))
+        interval_index = embeddings_file.stem
+        index.save(str(self.index_dir / f"{interval_index}.idx"))
         index.unload()
 
 class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
@@ -91,26 +80,24 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
         return {interval: self.get_index(interval) for interval in intervals}
 
     def get_index(self, interval: int) -> tuple[dict[int, EpisodeKey], AnnoyIndex] | None:
+        embedding_file = self.model_dir / f"{interval}.npy"
         index_file = self.index_dir / f"{interval}.idx"
-        directory_file = self.index_dir / f"{interval}.json"
-        if not (index_file.exists() and directory_file.exists()):
+        if not (index_file.exists() and embedding_file.exists()):
             # This might happen if there's a mismatch between the video file
             # lengths and the episode metadata.
             logger.warning(
                 f"Incomplete or missing index for interval: {interval}: "
-                f"f{index_file} and/or {directory_file} not found.")
+                f"f{index_file} and/or {embedding_file} not found.")
             return None
 
         logger.info(f"Loading index for interval: {interval}: {index_file}")
         index = AnnoyIndex(self.embedding_model.get_sentence_embedding_dimension(), "angular")
         index.load(str(index_file))
-        logger.info(f"Loading directory for interval: {interval}: {directory_file}")
-        with open(directory_file, "r") as json_in:
-            data = json.load(json_in)
-            index_directory = {int(id): EpisodeKey(season, episode)
-                               for id, (season, episode) in data.items()}
+        logger.info(f"Loading directory for interval: {interval} "
+                    f"from: {embedding_file}")
+        directory = EmbeddingsExtractor.get_directory(embedding_file)
 
-        return index_directory, index
+        return directory, index
 
 AnnoySubtitleIndex.reader_type = AnnoySubtitleIndexReader
 AnnoySubtitleIndex.writer_type = AnnoySubtitleIndexWriter

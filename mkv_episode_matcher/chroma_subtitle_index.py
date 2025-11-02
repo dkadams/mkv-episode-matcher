@@ -1,4 +1,3 @@
-import shutil
 from pathlib import Path
 
 import chromadb
@@ -48,34 +47,39 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex, AbstractSubtitleIndexWriter
         # Recreate an empty collection for subsequent indexing.
         self.collection = self._ensure_collection()
 
-    def build_interval_index(self, interval_dir: Path):
-        embedding_files = sorted(interval_dir.glob("*.npy"), key=lambda f: f.stem)
-        if not embedding_files:
-            logger.warning(f"No embeddings found for interval dir: {interval_dir}")
+    def build_interval_index(self, embeddings_file: Path):
+        interval_index = int(embeddings_file.stem)
+        logger.info(f"Upserting Chroma embeddings for interval: {interval_index}")
+
+        embedding_entries = np.load(embeddings_file)
+        if embedding_entries.size == 0:
+            logger.warning(
+                f"No Chroma embeddings found in {embeddings_file}, skipping interval"
+            )
             return
 
-        interval = int(interval_dir.stem)
-        logger.info(f"Upserting Chroma embeddings for interval: {interval}")
+        embeddings: list[list[float]] = (
+            embedding_entries["embedding"].astype(np.float32).tolist()
+        )
 
-        ids: list[str] = []
-        embeddings: list[list[float]] = []
-        metadatas: list[dict[str, int]] = []
-
-        for embedding_path in embedding_files:
-            vector = np.load(embedding_path).astype(np.float32)
-            episode = EpisodeKey.from_str(embedding_path.stem)
-            ids.append(f"{interval}:{episode.season_number}:{episode.episode_number}")
-            embeddings.append(vector.tolist())
-            metadatas.append(
-                {
-                    "season_number": episode.season_number,
-                    "episode_number": episode.episode_number,
-                    "interval": interval,
-                }
-            )
+        season_numbers = embedding_entries["episode_key"]["season_number"]
+        episode_numbers = embedding_entries["episode_key"]["episode_number"]
+        metadatas: list[dict[str, int]] = [
+            {
+                "season_number": int(season),
+                "episode_number": int(episode),
+                "interval": interval_index,
+            }
+            for season, episode, entry_id in zip(season_numbers, episode_numbers)
+        ]
 
         # Ensure stale entries for the interval are cleared before inserting.
-        self.collection.delete(where={"interval": interval})
+        self.collection.delete(where={"interval": interval_index})
+
+        ids = [
+            f"{interval_index}:{int(season)}:{int(episode)}"
+            for season, episode in zip(season_numbers, episode_numbers)
+        ]
         self.collection.upsert(ids=ids, embeddings=embeddings, metadatas=metadatas)
 
 

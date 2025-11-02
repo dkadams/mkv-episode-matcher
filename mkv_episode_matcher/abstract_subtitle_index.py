@@ -1,20 +1,20 @@
-import math
 from abc import ABC, abstractmethod
 from concurrent.futures import Executor
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 
-import numpy as np
 import pysubs2
 from loguru import logger
-from pysubs2 import SSAFile
 from rich.console import Console
 from rich.progress import Progress
 
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import SentenceTransformerModel
+from mkv_episode_matcher.embeddings_extractor import EmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.series import Series, get_specified_episodes
+from mkv_episode_matcher.subtitle_fixed_intervalizer import \
+    SubtitleFixedIntervalizer
 
 console = Console()
 
@@ -27,14 +27,13 @@ class AbstractSubtitleIndex(ABC):
 
         self.embedding_model = SentenceTransformerModel()
         self.interval_seconds = 30
-        self.interval_ms = self.interval_seconds * 1000
 
         # Embeddings are shared across multiple index types, so they are stored
         # in the series index directory.
         embeddings_dir = series.index_dir / "embeddings"
 
-        self.text_dir = embeddings_dir / "text"
-        self.text_dir.mkdir(parents=True, exist_ok=True)
+        self.interval_subs_dir = embeddings_dir / "interval-subs"
+        self.interval_subs_dir.mkdir(parents=True, exist_ok=True)
 
         self.model_dir = embeddings_dir / self.embedding_model.dir_name()
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -45,6 +44,17 @@ class AbstractSubtitleIndex(ABC):
         pass
 
 class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
+
+
+    def __init__(self, config: Configuration, series: Series):
+        super().__init__(config, series)
+
+        self.sub_intervalizer = SubtitleFixedIntervalizer(config, series,
+                                                          self.interval_seconds)
+        self.embedding_extractor = EmbeddingsExtractor(config, series,
+                                                       self.embedding_model,
+                                                       self.model_dir)
+
     @abstractmethod
     def build_interval_index(self, interval_dir: Path):
         pass
@@ -61,14 +71,18 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
             if self.index_dir.exists():
                 self.delete_index_files(progress)
 
-            self.extract_embeddings(executor, progress)
+            episode_keys = {EpisodeKey(ep.season_number, ep.episode_number)
+                            for ep in get_specified_episodes(self.config, self.series)}
+
+            self.intervalize_subs(episode_keys, executor, progress)
+            self.extract_embeddings(episode_keys, executor, progress)
 
             self.build_index(executor, progress)
 
     def delete_embeddings_files(self, progress: Progress):
         logger.info(f"Removing embeddings for: {self.series.name}, "
                     f"model: {self.embedding_model}. "
-                    f"Deleting: {self.text_dir} and {self.model_dir}")
+                    f"Deleting: {self.interval_subs_dir} and {self.model_dir}")
 
         def files(path: Path, ext: str) -> list[Path]:
             return [file for file in path.rglob("*")
@@ -77,9 +91,9 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
             return [dir for dir in path.iterdir()
                     if dir.is_dir()]
 
-        files_to_delete = (files(self.text_dir, ".txt")
+        files_to_delete = (files(self.interval_subs_dir, ".srt")
                            + files(self.model_dir, ".npy"))
-        dirs_to_delete = dirs(self.text_dir) + dirs(self.model_dir)
+        dirs_to_delete = dirs(self.model_dir)
 
         delete_progress = progress.add_task(
             f"Removing embeddings for: {self.series.name}",
@@ -108,118 +122,90 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
             progress.update(delete_progress, advance=1)
         progress.remove_task(delete_progress)
 
-    def extract_embeddings(self, executor: Executor, progress: Progress):
+    def intervalize_subs(self, episode_keys: set[EpisodeKey],
+        executor: Executor, progress: Progress):
+        logger.info(f"Intervalizing subs for: {self.series.name}")
+
+        existing_srts = self.interval_subs_dir.rglob("*.srt")
+        existing_keys = set(EpisodeKey.from_path(file)
+                            for file in existing_srts)
+        missing_subs = episode_keys - existing_keys
+
+        srt_files = list(self.series.subtitles_dir.rglob("*.srt"))
+        eps_and_subs_to_process = [(key, file) for file in srt_files
+                                   if (key := EpisodeKey.from_path(file)) in missing_subs]
+        if not eps_and_subs_to_process:
+          logger.info(f"No subs to intervalize for series: {self.series.name}")
+          return
+
+        extract_progress = progress.add_task(
+            f"Intervalizing subs for {self.series.name} "
+            f"({self.series.dir})", total=len(eps_and_subs_to_process))
+
+        if not self.interval_subs_dir.exists():
+            self.interval_subs_dir.mkdir(parents=True, exist_ok=True)
+
+        def extract(episode_key: EpisodeKey, input: Path):
+            output = self.interval_subs_dir / f"{episode_key}.srt"
+            logger.info(f"Intervalizing subs for: {self.series.name}, "
+                        f"episode: {episode_key} "
+                        f"from: {input} to {output}")
+            self.sub_intervalizer.execute(episode_key, input, output)
+            progress.update(extract_progress, advance=1)
+            logger.info(f"Intervalized subs for: {self.series.name}, "
+                        f"episode: {episode_key} "
+                        f"from: {input} to {output}")
+
+        missing_episodes, missing_subs = zip(*eps_and_subs_to_process)
+        list(executor.map(extract, missing_episodes, missing_subs))
+        progress.remove_task(extract_progress)
+        logger.info(f"Intervalized subs for: {self.series.name}")
+
+    def extract_embeddings(self, episode_keys: set[EpisodeKey],
+        executor: Executor, progress: Progress):
         logger.info(f"Extracting embeddings for: {self.series.name}")
 
         subtitle_files = list(self.series.subtitles_dir.rglob("*.srt"))
-        episodes = {EpisodeKey(ep.season_number, ep.episode_number)
-                    for ep in get_specified_episodes(self.config, self.series)}
-        logger.info(f"Extracting embeddings for Episodes: {episodes}")
 
         extract_progress = progress.add_task(
             f"Extracting embeddings for {self.series.name} "
             f"({self.series.dir})", total=len(subtitle_files))
 
-        def extract_embeddings(file):
-            logger.info(f"Extracting from: {file}")
-            episode = EpisodeKey.from_path(file)
-            logger.info(f"Identified: {file} as episode: {episode}")
-            if episode in episodes:
-                logger.info(f"Extracting: {file} as episode: {episode}")
-                self.extract(file, episode)
+        interval_subs = [(episode_key, path)
+                         for path in self.interval_subs_dir.rglob("*.srt")
+                         if (episode_key := EpisodeKey.from_path(path)) in episode_keys]
+        logger.info(f"Extracting embeddings for subs: {interval_subs}")
+
+        def extract_embeddings(interval_index: int):
+            self.embedding_extractor.execute(interval_index, interval_subs)
             progress.update(extract_progress, advance=1)
 
-        list(executor.map(extract_embeddings, subtitle_files))
+        interval_count = max(len(pysubs2.load(str(path), format_="srt"))
+                             for _, path in interval_subs)
+        intervals = range(interval_count)
+
+        list(executor.map(extract_embeddings, intervals))
         progress.remove_task(extract_progress)
         logger.info(f"Extracted embeddings for: {self.series.name}")
-
-    def extract(self, path: Path, episode: EpisodeKey):
-        logger.info(f"Extracting embeddings for episode: {self.series.name} episode: {episode}")
-
-        sub_file = pysubs2.load(str(path), format_="srt")
-        metadata = self.series.get_episode_detail(episode)
-        if not metadata:
-            logger.info(f"No metadata found for episode: {episode}")
-            return
-
-        interval_count = math.ceil(metadata["runtime"] * 60 / self.interval_seconds)
-        intervals = (
-            (i, range(i * self.interval_ms, (i + 1) * self.interval_ms))
-            for i in range(interval_count)
-        )
-
-        for index, interval in intervals:
-            text_file = self._get_text_dir(index) / f"{episode}.txt"
-            embeddings_file = self._get_model_dir(index) / f"{episode}.npy"
-            if text_file.exists() and embeddings_file.exists():
-                logger.info(f"Skipping interval: {interval} for episode: {episode}: .txt & .npy already exist. ")
-                continue
-
-            interval_text = self.extract_interval_text(interval, sub_file,
-                                                       text_file)
-            if interval_text is None:
-                continue
-
-            if embeddings_file.exists():
-                logger.info(f"Skipping interval: {interval} for episode: {episode}: .npy already exist. ")
-                continue
-
-            embeddings = self.embedding_model.encode_document(interval_text)
-            np.save(embeddings_file, embeddings.astype(np.float32))
-
-        logger.info(f"Extracted embeddings for episode: {self.series.name} episode: {episode}")
-
-    @staticmethod
-    def extract_interval_text(interval: range, sub_file: SSAFile,
-        text_file: Path) -> str:
-        if text_file.exists():
-            with open(text_file, "r") as text_in:
-                interval_text = text_in.read()
-        else:
-            subs = [
-                # There are no EOL characters in the transcribed text. So we
-                # don't want any in the subtitle text, either.
-                sub.plaintext.replace("\n", " ")
-                for sub in sub_file
-                if sub.start in interval or sub.end in interval
-            ]
-            if not subs:
-                interval_text = None
-            else:
-                interval_text = " ".join(subs)
-                with open(text_file, "w") as text_out:
-                    text_out.write(interval_text)
-
-        return interval_text
 
     def build_index(self, executor: Executor, progress: Progress):
         logger.info(f"Building indexes for: {self.series.name}, "
                     f"model: {self.embedding_model}")
 
-        interval_dirs = [dir for dir in self.model_dir.iterdir()
-                         if dir.is_dir()]
-        if not interval_dirs:
-            console.print(f"[red]No embedding dirs found for series: {self.series.name}.")
+        embeddings_files = [file for file in self.model_dir.iterdir()
+                         if file.is_file() and file.suffix == ".npy"]
+        if not embeddings_files:
+            console.print(f"[red]No embeddings files found for series: {self.series.name}.")
 
         index_progress = progress.add_task(
             f"Indexing {self.series.name} ({self.series.dir})",
-            total=len(interval_dirs))
+            total=len(embeddings_files))
 
-        def index_interval(dir):
-            logger.info(f"Indexing {dir}")
-            self.build_interval_index(dir)
+        def index_interval(file: Path):
+            logger.info(f"Indexing {file}")
+
+            self.build_interval_index(file)
             progress.update(index_progress, advance=1)
 
-        list(executor.map(index_interval, interval_dirs))
+        list(executor.map(index_interval, embeddings_files))
         progress.remove_task(index_progress)
-
-    def _get_text_dir(self, index: int) -> Path:
-        dir = self.text_dir / str(index)
-        dir.mkdir(parents=True, exist_ok=True)
-        return dir
-
-    def _get_model_dir(self, index: int) -> Path:
-        dir = self.model_dir / str(index)
-        dir.mkdir(parents=True, exist_ok=True)
-        return dir
-

@@ -15,7 +15,7 @@ from faster_whisper import WhisperModel
 from loguru import logger
 
 from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
-from mkv_episode_matcher.video_helper import get_video_duration
+from mkv_episode_matcher import video_helper as get_video_duration
 
 
 class WhisperTranscriber:
@@ -241,7 +241,7 @@ class TextSegmentExtractor:
         return str(transcript)
 
     def get_random_segments(self, path, duration, count):
-        total_duration = get_video_duration(path)
+        total_duration = get_video_duration.get_video_duration(path)
         chunks_per_file = math.ceil(total_duration / duration)
         count = min(chunks_per_file, count)
 
