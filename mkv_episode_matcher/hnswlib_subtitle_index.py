@@ -7,7 +7,7 @@ from rich.console import Console
 
 from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
-from mkv_episode_matcher.embeddings_extractor import EmbeddingsExtractor
+from mkv_episode_matcher.subtitle_embeddings_extractor import SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
@@ -48,13 +48,20 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
+        if isinstance(embeddings, Path):
+            embeddings = np.load(embeddings)
+
+        if not isinstance(embeddings, np.ndarray):
+            raise ValueError(f"Invalid embeddings: {embeddings}")
+
         distances_by_episode: dict[EpisodeKey, Score] = {}
-        for interval, text in text_segments:
-            directory, index = self.indexes.get(interval)
-            if index is None:
+        for interval, embedding in zip(embeddings["interval_index"], embeddings["embedding"]):
+            if not interval in self.indexes:
                 logger.warning(f"No index found for interval: {interval}")
                 continue
+
+            directory, index = self.indexes.get(interval)
 
             # Avoid asking for more results than are available. Doing so causes
             # hnswlib to throw this RuntimeError:
@@ -67,10 +74,9 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                 )
                 continue
 
-            query = self.embedding_model.encode_query(text).astype(np.float32)
             # We only passed a query vector, so we can squeeze the results since
             # they will only ever have one dimension.
-            ids, distances = map(np.squeeze, index.knn_query(query, k=neighbor_count,
+            ids, distances = map(np.squeeze, index.knn_query(embedding, k=neighbor_count,
                                              num_threads=1, filter=None))
             logger.info(f"Query: {interval} -> {ids} -> {distances}")
             episode_keys = [directory[id] for id in ids if id != -1]
@@ -104,7 +110,7 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
 
     def get_index(self, interval: int) -> tuple[dict[int, EpisodeKey], hnswlib.Index] | None:
         embedding_file = self.model_dir / f"{interval}.npy"
-        directory = EmbeddingsExtractor.get_directory(embedding_file)
+        directory = SubtitleEmbeddingsExtractor.get_directory(embedding_file)
 
         index_file = self.index_dir / f"{interval}.idx"
         logger.info(f"Loading index for interval: {interval}: {index_file}")

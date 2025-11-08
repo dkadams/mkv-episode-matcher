@@ -10,7 +10,7 @@ from rich.progress import Progress
 
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import SentenceTransformerModel
-from mkv_episode_matcher.embeddings_extractor import EmbeddingsExtractor
+from mkv_episode_matcher.subtitle_embeddings_extractor import SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.series import Series, get_specified_episodes
 from mkv_episode_matcher.subtitle_fixed_intervalizer import \
@@ -51,9 +51,9 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
 
         self.sub_intervalizer = SubtitleFixedIntervalizer(config, series,
                                                           self.interval_seconds)
-        self.embedding_extractor = EmbeddingsExtractor(config, series,
-                                                       self.embedding_model,
-                                                       self.model_dir)
+        self.embedding_extractor = SubtitleEmbeddingsExtractor(config, series,
+                                                               self.embedding_model,
+                                                               self.model_dir)
 
     @abstractmethod
     def build_interval_index(self, interval_dir: Path):

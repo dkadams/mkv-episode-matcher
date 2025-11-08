@@ -70,7 +70,7 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex, AbstractSubtitleIndexWriter
                 "episode_number": int(episode),
                 "interval": interval_index,
             }
-            for season, episode, entry_id in zip(season_numbers, episode_numbers)
+            for season, episode in zip(season_numbers, episode_numbers)
         ]
 
         # Ensure stale entries for the interval are cleared before inserting.
@@ -84,17 +84,21 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex, AbstractSubtitleIndexWriter
 
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
+        if isinstance(embeddings, Path):
+            embeddings = np.load(embeddings)
+
+        if not isinstance(embeddings, np.ndarray):
+            raise ValueError(f"Invalid embeddings: {embeddings}")
+
         scores_by_episode: dict[EpisodeKey, Score] = {}
 
-        for interval, text in text_segments:
-            query_vector = (
-                self.embedding_model.encode_query(text).astype(np.float32).tolist()
-            )
+        for interval, query_vector in zip(embeddings["interval_index"],
+                                          embeddings["embedding"]):
 
             result = self.collection.query(
                 query_embeddings=[query_vector],
-                where={"interval": interval},
+                where={"interval": int(interval)},
                 n_results=5,
                 include=["metadatas", "distances"],
             )

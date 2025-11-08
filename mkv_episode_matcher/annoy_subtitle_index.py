@@ -7,7 +7,7 @@ from rich.console import Console
 
 from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
-from mkv_episode_matcher.embeddings_extractor import EmbeddingsExtractor
+from mkv_episode_matcher.subtitle_embeddings_extractor import SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import Match, Score
 from mkv_episode_matcher.series import Series
@@ -44,17 +44,23 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(self, text_segments: list[tuple[int, str]]) -> list[Match]:
+    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
+        if isinstance(embeddings, Path):
+            embeddings = np.load(embeddings)
+
+        if not isinstance(embeddings, np.ndarray):
+            raise ValueError(f"Invalid embeddings: {embeddings}")
+
         scores_by_episode: dict[EpisodeKey, Score] = {}
-        for interval, text in text_segments:
+        for interval, embedding in zip(embeddings["interval_index"], embeddings["embedding"]):
             index_entry = self.indexes.get(interval)
             if index_entry is None:
                 logger.warning(f"No index found for interval: {interval}")
                 continue
 
             directory, index = index_entry
-            query = self.embedding_model.encode_query(text)
-            ids, distances = index.get_nns_by_vector(query, 5, include_distances=True)
+            ids, distances = index.get_nns_by_vector(embedding, 5,
+                                                     include_distances=True)
             logger.info(f"Query: {interval} -> {ids} -> {distances}")
             for id, distance in zip(ids, distances):
                 episode_id = directory[id]
@@ -95,7 +101,7 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
         index.load(str(index_file))
         logger.info(f"Loading directory for interval: {interval} "
                     f"from: {embedding_file}")
-        directory = EmbeddingsExtractor.get_directory(embedding_file)
+        directory = SubtitleEmbeddingsExtractor.get_directory(embedding_file)
 
         return directory, index
 

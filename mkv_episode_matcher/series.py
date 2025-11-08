@@ -25,6 +25,8 @@ class Series:
     index_dir: Path
     subtitles_dir: Path
 
+    transcription_dir: Path
+
     @lru_cache
     @staticmethod
     def from_dir(series_dir: Path):
@@ -55,8 +57,10 @@ class Series:
         index_dir = Path(index_dir_setting) if index_dir_setting else series_dot_dir / "indexes"
 
         subtitles_dir = series_dot_dir / "subtitles"
+
+        transcription_dir = series_dot_dir / "transcriptions"
         return Series(series_dir, series_dot_dir, series_detail, series_name,
-                      index_dir, subtitles_dir)
+                      index_dir, subtitles_dir, transcription_dir)
 
     def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
         season_detail = self.detail[f"season/{episode.season_number}"]
@@ -69,6 +73,33 @@ class Series:
 
         return {k: episode_detail.get(k, None) for k in (keys
                 or ["id", "season_number", "episode_number", "runtime"])}
+
+    def get_transcription_dir(self, duration: int, count: int) -> Path:
+            return self.transcription_dir / f"dur{duration}s_count{count}"
+
+    def ensure_transcription_dir(self, duration: int, count: int) -> Path:
+        dir = self.get_transcription_dir(duration, count)
+        if not dir.exists():
+            dir.mkdir(exist_ok=True, parents=True)
+        return dir
+
+    def get_transcription_text_dir(self, duration: int, count: int) -> Path:
+        return self.get_transcription_dir(duration, count) / "text"
+
+    def ensure_transcription_text_dir(self, duration: int, count: int) -> Path:
+        dir = self.get_transcription_text_dir(duration, count)
+        if not dir.exists():
+            dir.mkdir(exist_ok=True, parents=True)
+        return dir
+
+    def get_transcription_embeddings_dir(self, duration: int, count: int) -> Path:
+        return self.get_transcription_dir(duration, count) / "embeddings"
+
+    def ensure_transcription_embeddings_dir(self, duration: int, count: int) -> Path:
+        dir = self.get_transcription_embeddings_dir(duration, count)
+        if not dir.exists():
+            dir.mkdir(exist_ok=True, parents=True)
+        return dir
 
 class SeriesDirectoryProcessor:
     def __init__(self, config: Configuration):

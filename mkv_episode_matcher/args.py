@@ -10,7 +10,7 @@ from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
 from mkv_episode_matcher.subtitle_index import index_subtitles
-from mkv_episode_matcher.text_segment_extractor import (
+from mkv_episode_matcher.transcribers import (
     WhisperTranscriber,
     FasterWhisperTranscriber,
     WhispercppCliTranscriber,

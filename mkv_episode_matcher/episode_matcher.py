@@ -98,9 +98,7 @@ def display_results_by_episode(series: Series, results: List[MatchResult]):
     matches_by_episode = get_matches_by_episode(results, series)
 
     for episode, matches in matches_by_episode.items():
-        if len(matches) == 0:
-            console.print(f"[bold red]No matches found for {episode}")
-        else:
+        if len(matches) > 0:
             match_table = Table(title=f"{str(episode)}")
             match_table.add_column("File")
             match_table.add_column("Score")

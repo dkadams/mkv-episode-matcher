@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from mkv_episode_matcher import text_segment_extractor as tse
+from mkv_episode_matcher import segment_transcriber as tse
 
 
 class DummyTranscriber:
@@ -32,7 +32,7 @@ def test_get_random_segments_uses_transcriber(monkeypatch):
     monkeypatch.setattr(tse.get_video_duration, "get_video_duration", lambda _: 400)
 
     transcriber = DummyTranscriber()
-    extractor = tse.TextSegmentExtractor("tiny", transcriber=transcriber)
+    extractor = tse.SegmentTranscriber("tiny", transcriber=transcriber)
 
     segments = extractor.get_random_segments(Path("video.mkv"), duration=50, count=2)
 
@@ -63,7 +63,7 @@ def test_get_text_segments_returns_indexed_text(monkeypatch):
         def transcribe(self, audio_path):
             return {"text": Path(audio_path).stem}
 
-    extractor = tse.TextSegmentExtractor("tiny", transcriber=TextReturningTranscriber())
+    extractor = tse.SegmentTranscriber("tiny", transcriber=TextReturningTranscriber())
 
     segments = extractor.get_text_segments(Path("video.mkv"), duration=30, count=5)
 
