@@ -1,4 +1,5 @@
 # utils.py
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -151,3 +152,14 @@ def compare_text(text1, text2):
     # Compare the two lists of text lines
     matching_lines = set(flat_text1).intersection(flat_text2)
     return len(matching_lines)
+
+def unique_filename(input: Path, extension: str) -> str:
+    path = input.resolve()
+
+    path_bytes = str(path).encode("utf-8")
+    path_hash = hashlib.sha256(path_bytes).hexdigest()
+
+    # The parent should enough to uniquely identify the file, but including the
+    # path hash ensures uniqueness. Adding the parent directory name helps in
+    # identifying the original file path.
+    return f"{path_hash}_{input.parent.name}_{input.with_suffix(extension).name}"

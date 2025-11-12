@@ -4,6 +4,7 @@ from pathlib import Path
 from rich.console import Console
 from loguru import logger
 
+from mkv_episode_matcher.series import SERIES_DEFAULT_SETTINGS
 from mkv_episode_matcher.series_ui import print_series_results, series_id_prompt
 from mkv_episode_matcher.tmdb_client import fetch_series_detail, search_series, \
     fetch_season_details
@@ -42,15 +43,26 @@ class SeriesInitializer:
         if series_file.exists() and not self.config.args.refresh:
             console.print(f"[bold orange1]Series data already initialized: {self.series_dir}. Use --refresh to re-initialize.")
             return
+        else:
+            # The season detail response **includes** the series detail, so we write
+            # it as the series detail.
+            seasons_detail = fetch_season_details(self.config, series_id, seasons)
 
-        # The season detail response **includes** the series detail, so we write
-        # it as the series detail.
-        seasons_detail = fetch_season_details(self.config, series_id, seasons)
+            self.series_dot_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Writing series detail to {series_file}")
+            with open(series_file, "w", encoding="utf-8") as out:
+                json.dump(seasons_detail, out)
 
-        self.series_dot_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Writing series detail to {series_file}")
-        with open(series_file, "w", encoding="utf-8") as out:
-            json.dump(seasons_detail, out)
+        series_settings = SERIES_DEFAULT_SETTINGS.copy()
+        if self.config.args.segment_duration:
+            series_settings["segment_duration"] = self.config.args.segment_duration
+        if self.config.args.random_seed:
+            series_settings["random_seed"] = self.config.args.random_seed
+
+        series_settings_file = self.series_dot_dir / "settings.json"
+        logger.info(f"Writing series settings to {series_settings_file}")
+        with open(series_settings_file, "w", encoding="utf-8") as out:
+            json.dump(series_settings, out)
 
 
     def get_series_id(self):

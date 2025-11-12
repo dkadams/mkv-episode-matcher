@@ -1,3 +1,4 @@
+import hashlib
 import itertools
 import json
 from dataclasses import dataclass
@@ -11,21 +12,52 @@ from rich.console import Console
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.episode import _get_episodes, Season, \
     Episode, get_specs, UnknownEpisodeError, EpisodeKey
+from mkv_episode_matcher.utils import unique_filename
+
+SERIES_DEFAULT_SETTINGS = {
+    "segment_duration": 30,
+    "random_seed": 12345
+}
 
 console = Console()
 
 @dataclass(eq=True, frozen=True, order=True)
 class Series:
     dir: Path
-    dot_dir: Path
 
     detail: dict
     name: str
 
-    index_dir: Path
-    subtitles_dir: Path
+    segment_duration: int
+    random_seed: int
 
-    transcription_dir: Path
+    @property
+    def dot_dir(self) -> Path:
+        return self.dir / ".mkv-episode-matcher"
+
+    @property
+    def subtitles_dir(self):
+        return self.dot_dir / "subtitles"
+
+    @property
+    def segments_dir(self) -> Path:
+        return self.dot_dir / "segments" / str(self.segment_duration)
+
+    @property
+    def index_dir(self):
+        return self.segments_dir / "indexes"
+
+    @property
+    def transcriptions_dir(self):
+        return self.segments_dir / "transcriptions"
+
+    @property
+    def transcriptions_text_dir(self):
+        return self.transcriptions_dir / "text"
+
+    @property
+    def transcriptions_embeddings_dir(self):
+        return self.transcriptions_dir / "embeddings"
 
     @lru_cache
     @staticmethod
@@ -48,19 +80,17 @@ class Series:
         logger.info(f"Processing series: {series_name}")
 
         settings_file = series_dot_dir / "settings.json"
-        settings = {}
         if settings_file.exists():
             with open(settings_file, 'r') as file:
                 settings = json.load(file)
+        else:
+            settings = SERIES_DEFAULT_SETTINGS.copy()
 
-        index_dir_setting = settings.get("index-dir")
-        index_dir = Path(index_dir_setting) if index_dir_setting else series_dot_dir / "indexes"
+        segment_duration = settings.get("segment_duration")
+        random_seed = settings.get("random_seed")
 
-        subtitles_dir = series_dot_dir / "subtitles"
-
-        transcription_dir = series_dot_dir / "transcriptions"
-        return Series(series_dir, series_dot_dir, series_detail, series_name,
-                      index_dir, subtitles_dir, transcription_dir)
+        return Series(series_dir, series_detail, series_name,
+                      segment_duration, random_seed)
 
     def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
         season_detail = self.detail[f"season/{episode.season_number}"]
@@ -74,32 +104,36 @@ class Series:
         return {k: episode_detail.get(k, None) for k in (keys
                 or ["id", "season_number", "episode_number", "runtime"])}
 
-    def get_transcription_dir(self, duration: int, count: int) -> Path:
-            return self.transcription_dir / f"dur{duration}s_count{count}"
-
-    def ensure_transcription_dir(self, duration: int, count: int) -> Path:
-        dir = self.get_transcription_dir(duration, count)
+    @staticmethod
+    def _ensure_dir(dir: Path):
         if not dir.exists():
             dir.mkdir(exist_ok=True, parents=True)
         return dir
 
-    def get_transcription_text_dir(self, duration: int, count: int) -> Path:
-        return self.get_transcription_dir(duration, count) / "text"
+    def ensure_segments_dir(self) -> Path:
+        return self._ensure_dir(self.segments_dir)
 
-    def ensure_transcription_text_dir(self, duration: int, count: int) -> Path:
-        dir = self.get_transcription_text_dir(duration, count)
-        if not dir.exists():
-            dir.mkdir(exist_ok=True, parents=True)
-        return dir
+    def ensure_transcription_text_dir(self) -> Path:
+        return self._ensure_dir(self.transcriptions_text_dir)
 
-    def get_transcription_embeddings_dir(self, duration: int, count: int) -> Path:
-        return self.get_transcription_dir(duration, count) / "embeddings"
+    def ensure_transcription_embeddings_dir(self) -> Path:
+        return self._ensure_dir(self.transcriptions_embeddings_dir)
 
-    def ensure_transcription_embeddings_dir(self, duration: int, count: int) -> Path:
-        dir = self.get_transcription_embeddings_dir(duration, count)
-        if not dir.exists():
-            dir.mkdir(exist_ok=True, parents=True)
-        return dir
+    def transcription_file(self, input: Path) -> Path:
+        return self.ensure_transcription_text_dir() / unique_filename(input, '.json')
+
+    @staticmethod
+    def transcription_file_name(input: Path) -> str:
+        path = input.resolve()
+
+        path_bytes = str(path).encode("utf-8")
+        path_hash = hashlib.sha256(path_bytes).hexdigest()
+
+        # The parent should enough to uniquely identify the file, but including the
+        # path hash ensures uniqueness. Adding the parent directory name helps in
+        # identifying the original file path.
+        return f"{path_hash}_{input.parent.name}_{input.with_suffix('.json').name}"
+
 
 class SeriesDirectoryProcessor:
     def __init__(self, config: Configuration):

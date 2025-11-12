@@ -17,7 +17,6 @@ from mkv_episode_matcher.transcribers import (
     WhisperKitCliTranscriber,
 )
 
-
 def build_args_parser():
     parser = get_root_parser()
 
@@ -101,6 +100,14 @@ def add_init_series(subparsers, config_parser, series_dir_parser):
                                   help="The TMDB id of the series")
     init_show_parser.add_argument("--refresh", action="store_true",
                                   help="Refresh the series details")
+    init_show_parser.add_argument("--segment-duration",
+                                  type=int,
+                                  help="The number of seconds to use for segmenting episodes (default: 30)",
+                                  default=30)
+    init_show_parser.add_argument("--random-seed",
+                                  type=int,
+                                  help="The random seed to use for segmenting episodes (default: 12345)",
+                                  default=12345)
     init_show_parser.set_defaults(func=init_series)
 
 
@@ -155,6 +162,11 @@ def add_match(subparsers, config_parser, index_parser):
                               dest="display_by_file",
                               action="store_true",
                               help="Display results by file")
+
+    match_parser.add_argument('--segments-per-minute',
+                              type=float,
+                              default=.5,
+                              help="Number of segments to extract per minute (default: .5)")
 
     xscriber_group = match_parser.add_mutually_exclusive_group()
     xscriber_group.add_argument(
