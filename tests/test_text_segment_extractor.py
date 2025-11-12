@@ -65,7 +65,7 @@ def test_get_text_segments_returns_indexed_text(monkeypatch):
 
     extractor = tse.SegmentTranscriber("tiny", transcriber=TextReturningTranscriber())
 
-    segments = extractor.get_text_segments(Path("video.mkv"), duration=30, count=5)
+    segments = extractor.get_segments(Path("video.mkv"))
 
     assert segments == [
         (0, "chunk_0"),

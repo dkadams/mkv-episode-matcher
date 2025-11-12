@@ -1,18 +1,23 @@
 from __future__ import annotations
 
-import math
-import random
+import json
 import time
+from pathlib import Path
 
 from loguru import logger
 
-from mkv_episode_matcher import video_helper as get_video_duration
 from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
+from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.series import Series
 
 
 class SegmentTranscriber:
-    def __init__(self, model_name, transcriber):
+    def __init__(self, config: Configuration, series: Series,
+        model_name: str, transcriber):
+        self.config = config
+        self.series = series
         self.transcriber = self._init_transcriber(model_name, transcriber)
+        self.output_dir = series.ensure_transcription_text_dir()
 
     @staticmethod
     def _init_transcriber(model_name, transcriber):
@@ -30,6 +35,8 @@ class SegmentTranscriber:
         if transcript is None:
             return None
 
+        # TODO some of this is specific to the transcriber used and should be
+        # pushed down.
         if isinstance(transcript, dict):
             text = transcript.get("text")
             if text:
@@ -52,20 +59,23 @@ class SegmentTranscriber:
             texts = [str(item).strip() for item in transcript if item]
             return " ".join(texts) if texts else None
 
-        return str(transcript)
+        return (str(transcript)
+                .strip()
+                # whisper-cli inserts a marker when there's no audio for some
+                # period of time.
+                .replace("[BLANK_AUDIO]", " "))
 
-    def get_random_segments(self, path, duration, count):
-        total_duration = get_video_duration.get_video_duration(path)
-        chunks_per_file = math.ceil(total_duration / duration)
-        count = min(chunks_per_file, count)
+    def execute(self, input: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
+        return {path: self.transcribe(path, chunk_indexes)
+                for path, chunk_indexes in input}
 
-        # use a fixed seed so that we choose the same chunks for each file
-        random.seed(12345)
+    def transcribe(self, path: Path, chunk_indexes: list[int]) -> Path:
+        logger.info(f"Transcribing {path} chunks: {chunk_indexes}")
+        duration = self.series.segment_duration
 
-        # TODO bias this towards the middle of the file?
-        chunk_indexes = random.sample(range(chunks_per_file), count)
+        output = self.series.transcription_file(path)
 
-        results = []
+        transcribed = {}
         total_extract_time = 0
         total_transcribe_time = 0
         with AudioChunkExtractor() as audio_extractor:
@@ -82,18 +92,23 @@ class SegmentTranscriber:
                 total_transcribe_time += time.time() - before
 
                 if text:
-                    results.append((index, text))
+                    transcribed[index] = text
                 else:
                     logger.warning(f"Failed to transcribe {chunk_path}")
 
-        logger.info(f"Extracted {count} audio chunks "
+        logger.info(f"Extracted {len(transcribed)} audio chunks "
                     f"in {total_extract_time:.2f}s, transcribed "
                     f"in {total_transcribe_time:.2f}s")
-        return results
 
-    def get_text_segments(self, path, duration=30, count=10):
-        segments = self.get_random_segments(path, duration, count)
-        return {index: text for index, text in segments}
+        existing_transcript = {}
+        if output.exists():
+            existing_transcript = json.load(open(output))
+
+        with open(output, "w") as json_out:
+            full_transcript = existing_transcript | transcribed
+            json.dump(full_transcript, json_out)
+
+        return output
 
     @staticmethod
     def _extract_text(payload: dict) -> str | None:

@@ -11,7 +11,7 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import IndexedEpisodeMatcher, \
     MatchResult, Match
 from mkv_episode_matcher.series import get_series, Series, get_seasons_by_number
-from mkv_episode_matcher.video_helper import get_video_duration
+from mkv_episode_matcher.video_helper import get_video_duration_seconds
 
 console = Console()
 
@@ -104,7 +104,7 @@ def display_results_by_episode(series: Series, results: List[MatchResult]):
             match_table.add_column("Score")
             match_table.add_column("File Duration")
             for file, match in matches[:5]:
-                duration = get_video_duration(file)
+                duration = get_video_duration_seconds(file)
                 match_table.add_row(str(file),
                                     str(match.score),
                                     str(timedelta(seconds=duration))

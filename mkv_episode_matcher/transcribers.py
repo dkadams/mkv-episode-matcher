@@ -4,12 +4,16 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import torch
 import whisper
 from faster_whisper import WhisperModel
 from loguru import logger
 
+@runtime_checkable
+class SubprocessTranscriber(Protocol):
+    pass
 
 class WhisperTranscriber:
     def __init__(self, model_name):
@@ -30,7 +34,7 @@ class FasterWhisperTranscriber:
         text_segments = [segment.text for segment in segments]
         return " ".join(text_segments)
 
-class WhispercppCliTranscriber:
+class WhispercppCliTranscriber(SubprocessTranscriber):
     """Thin wrapper around whisper.cpp's whispercpp-cli binary."""
 
     def __init__(self, model_name, executable="whisper-cli"):
@@ -111,12 +115,14 @@ class WhispercppCliTranscriber:
             transcript_file = Path(f"{output_base}.txt")
             if not transcript_file.exists():
                 logger.error(f"whispercpp-cli did not produce expected transcript file {transcript_file}")
+                logger.error(f"whispercpp-cli output: {result.stdout.strip()}")
+                logger.error(f"whispercpp-cli error: {result.stderr.strip()}")
                 return None
 
             text = transcript_file.read_text(encoding="utf-8").strip()
             return text or None
 
-class WhisperKitCliTranscriber:
+class WhisperKitCliTranscriber(SubprocessTranscriber):
     """Adapter for the Swift whisperkit-cli binary."""
 
     def __init__(self, model_name: str, executable: str = "whisperkit-cli"):

@@ -17,11 +17,10 @@ class TranscriptionEmbeddingsExtractor:
         self.series = series
         self.model = model
 
-    def execute(self, transcription_json: Path,
-        duration: int, count: int) -> Path:
+    def execute(self, transcription_json: Path) -> Path:
         dtype = self.get_dtype()
 
-        output_dir = self.series.ensure_transcription_embeddings_dir(duration, count)
+        output_dir = self.series.ensure_transcription_embeddings_dir()
         embeddings_file = output_dir / transcription_json.with_suffix(".npy").name
         if embeddings_file.exists():
             existing_embeddings = np.load(embeddings_file).view(dtype)

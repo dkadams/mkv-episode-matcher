@@ -18,11 +18,12 @@ console = Console()
 class HnswlibSubtitleIndex(AbstractSubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
+        if not self.index_dir.exists():
+            self.index_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def index_dir(self):
         return self.series.index_dir / "hnswlib.index"
-
 
 class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex, AbstractSubtitleIndexWriter):
 
@@ -35,12 +36,15 @@ class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex, AbstractSubtitleIndexWrit
                          ef_construction=200, M=16)
 
         # use one thread for now, since we're already parallelizing the build
-        index.add_items(embedding_entries["embedding"], embedding_entries["id"],
-                        num_threads=1)
+        index.add_items(embedding_entries["embedding"], embedding_entries["id"])
 
+        logger.info(f"Built index for interval: {embeddings_file.stem}. items: {index.get_current_count()}")
         index.set_ef(200)
         interval_index = embeddings_file.stem
-        index.save_index(str(self.index_dir / f"{interval_index}.idx"))
+        index_path = str(self.index_dir / f"{interval_index}.idx")
+        logger.info(f"Saving index for interval: {interval_index} to: {index_path}")
+        index.save_index(index_path)
+        logger.info(f"Saved index for interval?: {interval_index} to?: {index_path}")
 
 class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
     def __init__(self, config, series: Series):
@@ -74,11 +78,11 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                 )
                 continue
 
-            # We only passed a query vector, so we can squeeze the results since
-            # they will only ever have one dimension.
-            ids, distances = map(np.squeeze, index.knn_query(embedding, k=neighbor_count,
-                                             num_threads=1, filter=None))
-            logger.info(f"Query: {interval} -> {ids} -> {distances}")
+            ids_by_q, dists_by_q = index.knn_query(embedding, k=neighbor_count,
+                                             num_threads=1, filter=None)
+            # knn_query supports multiple queries, but we only have one. So
+            # there'll only be one result.
+            ids, distances = ids_by_q[0], dists_by_q[0]
             episode_keys = [directory[id] for id in ids if id != -1]
             if len(episode_keys) == 0 or len(distances) == 0:
                 continue

@@ -5,6 +5,8 @@ from typing import ContextManager
 
 from loguru import logger
 
+from mkv_episode_matcher.utils import unique_filename
+
 
 class AudioChunkExtractor(ContextManager):
     def __init__(self):
@@ -15,7 +17,7 @@ class AudioChunkExtractor(ContextManager):
 
     def extract(self, file: Path, start_time: int, duration: int) -> Path:
 
-        chunk_name = file.with_suffix(f".{duration}S.AT{start_time}s.wav").name
+        chunk_name = unique_filename(file, f".{duration}S.AT{start_time}s.wav")
         chunk_path = self.temp_dir / chunk_name
 
         if not chunk_path.exists():

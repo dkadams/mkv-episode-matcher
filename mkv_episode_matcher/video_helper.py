@@ -1,10 +1,8 @@
-import math
-import os
 import subprocess
 from pathlib import Path
 
 
-def get_video_duration(file: Path):
+def get_video_duration_seconds(file: Path) -> float:
     duration = float(
         subprocess.check_output([
             "ffprobe",
@@ -17,4 +15,4 @@ def get_video_duration(file: Path):
             file,
         ]).decode()
     )
-    return int(math.ceil(duration))
+    return duration
