@@ -69,6 +69,9 @@
   <component name="ProjectRootManager" version="2" languageLevel="JDK_14" default="true" project-jdk-name="Python 3.12 (mkv-episode-matcher)" project-jdk-type="Python SDK">
     <output url="file://$PROJECT_DIR$/out" />
   </component>
+  <component name="PythonCompatibilityInspectionAdvertiser">
+    <option name="version" value="3" />
+  </component>
   <component name="SuppressionsComponent">
     <option name="suppComments" value="[]" />
   </component>
