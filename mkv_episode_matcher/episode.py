@@ -12,7 +12,14 @@ class EpisodeKey(tuple[int, int]):
     season_number: int
     episode_number: int
 
-    def __new__(cls, season_number, episode_number):
+    def __new__(cls, season_number, episode_number=None):
+        # Allow construction from (season, episode) tuple/iterable so dataclasses.asdict
+        # recreation works without breaking the strict two-arg signature.
+        if episode_number is None:
+            try:
+                season_number, episode_number = season_number
+            except Exception as exc:
+                raise TypeError("EpisodeKey requires season and episode") from exc
         return super().__new__(cls, (season_number, episode_number))
 
     @property
