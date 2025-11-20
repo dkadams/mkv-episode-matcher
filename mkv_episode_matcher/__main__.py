@@ -27,14 +27,16 @@ if not log_dir.exists():
 logger.remove()
 # Add a new handler for stdout logs
 logger.add(
-    str(log_dir / "stdout.log"),
+    str(log_dir / "stdout-{time:YYYYMMDDTHHmmss}.log"),
     format="{time} {level} {message}",
     level="INFO",
-    rotation="10 MB",
+    retention=10,
 )
 
 # Add a new handler for error logs
-logger.add(str(log_dir / "stderr.log"), level="ERROR", rotation="10 MB")
+logger.add(str(log_dir / "stderr-{time:YYYYMMDDTHHmmss}.log"),
+           level="ERROR",
+           retention=10)
 
 @logger.catch
 def main():
