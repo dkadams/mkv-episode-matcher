@@ -45,7 +45,11 @@ class SentenceTransformerModel:
     def _encode(self, text: str, method: str) -> np.ndarray:
         encoder = getattr(self._model, method, None)
         if callable(encoder):
-            vector = encoder(text)
+            vector = encoder(text,
+                             convert_to_numpy=True,
+                             normalize_embeddings=True)
         else:
-            vector = self._model.encode(text, convert_to_numpy=True)
+            vector = self._model.encode(text,
+                                        convert_to_numpy=True,
+                                        normalize_embeddings=True)
         return np.asarray(vector, dtype=np.float32)
