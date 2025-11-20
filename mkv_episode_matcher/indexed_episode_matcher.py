@@ -1,4 +1,6 @@
-import hashlib
+import dataclasses
+from dataclasses import asdict, replace
+import json
 import json
 import math
 import multiprocessing
@@ -6,10 +8,10 @@ import random
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, \
     as_completed
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from itertools import islice
 from pathlib import Path
-from typing import Iterable, Self, Optional, Type
+from typing import Iterable, Optional, Type
 
 from loguru import logger
 from more_itertools import unique
@@ -29,61 +31,30 @@ from mkv_episode_matcher.video_helper import get_video_duration_seconds
 
 console = Console()
 
-@dataclass(frozen=True, eq=True)
-class Score:
-    """
-    Represents how well an episode matched a subtitle file.
-        -count: Number of segments matched
-        -min_distance: Minimum distance of all the matched segments
-    """
-    count: int
-    min_distance: float
-
-    def key(self) -> tuple[int, float]:
-        """
-        DESCENDING matches, ASCENDING distance.
-        More matches, less distance = better match.
-        """
-        return -self.count, self.min_distance
-
-    def __lt__(self, other: Self) -> bool:
-        return self.key() < other.key()
-
-    def __str__(self):
-        return f"#: {self.count} min(d): {self.min_distance:.5f}"
-
 PathDict: Type = dict[Path, Path]
 
 @dataclass(frozen=True, eq=True, order=True)
-class Match:
-    season: int
-    episode: int
-    score: Score
-
-    def key(self) -> EpisodeKey:
-        return EpisodeKey(self.season, self.episode)
-
-@dataclass(frozen=True, eq=True)
-class MatchResult:
-    file: Path
-    transcription: Optional[Path]
-    embeddings: Optional[Path]
-    matches: list[Match]
-    known_episode: Optional[EpisodeKey]
-
-@dataclass(frozen=True, eq=True, order=True)
 class VideoInfo:
-    file: Path
-    path_hash: str
+    full_path_str: str
     byte_count: int
     minutes: float
     segments: int
 
-    def asdict(self) -> dict:
-        result = asdict(self)
-        # Convert non-JSON Encodable Path to str
-        result["file"] = str(result["file"])
-        return result
+@dataclass(frozen=True, eq=True, order=True)
+class Video:
+    file: Path
+    video_info: VideoInfo
+    transcription: Optional[Path]
+    embeddings: Optional[Path]
+    known_episode: Optional[EpisodeKey]
+
+@dataclass(frozen=True, eq=True, order=True)
+class IntervalMatch:
+    video: Video | Path
+    video_index: int
+    episode: EpisodeKey
+    episode_index: int
+    distance: float
 
 class IndexedEpisodeMatcher:
     def __init__(self, config: Configuration, series: Series):
@@ -94,7 +65,7 @@ class IndexedEpisodeMatcher:
 
         self.text_extractor_model = "small.en"
 
-    def match(self, paths) -> list[MatchResult]:
+    def match(self, paths) -> list[IntervalMatch]:
 
         before = time.time()
         video_files = list(self._collect_files(paths))
@@ -107,7 +78,8 @@ class IndexedEpisodeMatcher:
         with Progress() as progress:
             match_progress = progress.add_task(f"Matching: {self.series.name}", total=100.0)
 
-            transcriptions = self.get_transcriptions(progress, video_files)
+            video_info_by_path, transcriptions, = self.get_transcriptions(progress, video_files)
+
             progress.update(match_progress, advance=33.3333)
 
             embeddings = self.get_embeddings(progress, transcriptions)
@@ -116,20 +88,20 @@ class IndexedEpisodeMatcher:
             query_results = self.get_query_results(progress, embeddings)
             progress.update(match_progress, advance=33.3333)
 
-            match_results = [
-                MatchResult(file,
-                            transcription := transcriptions[file],
-                            embedding := embeddings[transcription],
-                            query_results[embedding],
-                            EpisodeKey.from_path(file))
-                for file in video_files
-            ]
+        videos = [Video(file, video_info_by_path[file],
+                        transcription := transcriptions[file],
+                        embeddings[transcription],
+                        EpisodeKey.from_path(file))
+                  for file in video_files]
 
-        return match_results
+        # Update references from embeddings path to video
+        return [replace(result, video=video)
+                for video in videos
+                for result in query_results[video.embeddings]]
 
-    def get_transcriptions(self, progress: Progress, videos: list[Path]) -> PathDict:
+    def get_transcriptions(self, progress: Progress, videos: list[Path]) -> tuple[dict[Path, VideoInfo], PathDict]:
         if not videos:
-            return {}
+            return {}, {}
 
         read_cache_task = progress.add_task(f"Reading video info cache",
                                             total=1)
@@ -150,13 +122,12 @@ class IndexedEpisodeMatcher:
             def get_video_info(path: Path) -> tuple[Path, VideoInfo]:
                 logger.info(f"Getting video info for: {path}")
                 full_path = path.resolve()
-                # We only use the full_path for hashing, so don't return it
-                path_hash = hashlib.sha256(str(full_path).encode()).hexdigest()
                 byte_count = full_path.stat().st_size
-                video_dict = video_info_dict.get(path_hash)
+                full_path_str = str(full_path)
+                video_dict = video_info_dict.get(full_path_str)
                 if video_dict and video_dict["byte_count"] == byte_count:
                     logger.info(f"Found cached video info for: {path}")
-                    return path, VideoInfo(full_path, path_hash, byte_count,
+                    return path, VideoInfo(str(full_path_str), byte_count,
                                            video_dict["minutes"],
                                            video_dict["segments"])
 
@@ -166,7 +137,7 @@ class IndexedEpisodeMatcher:
                 seconds = get_video_duration_seconds(full_path)
                 minutes = seconds / 60.0
                 segments = math.ceil(seconds / self.series.segment_duration)
-                return path, VideoInfo(full_path, path_hash, byte_count,
+                return path, VideoInfo(full_path_str, byte_count,
                                        minutes, segments)
 
             def get_cached_segment_count(path: Path) -> tuple[Path, int]:
@@ -209,7 +180,7 @@ class IndexedEpisodeMatcher:
 
         write_video_info_task = progress.add_task(f"Writing video info cache",
                                                   total=1)
-        video_info_dict = {video_info.path_hash: video_info.asdict()
+        video_info_dict = {video_info.full_path_str: asdict(video_info)
                            for video_info in video_info_by_path.values()}
         with video_cache_path.open("w") as cache:
             json.dump(video_info_dict, cache)
@@ -267,7 +238,7 @@ class IndexedEpisodeMatcher:
                 progress.update(transcription_progress, advance=len(result))
 
         progress.remove_task(transcription_progress)
-        return cached_transcripts | transcribed
+        return video_info_by_path, cached_transcripts | transcribed
 
     def get_segment_selection(self, video_infos: Iterable[VideoInfo]) -> list[int]:
         """
@@ -283,7 +254,7 @@ class IndexedEpisodeMatcher:
         extracted from minutes 23-33. The additional segments for the 44 minute
         episode will only occur during minutes 34-44.
 
-        :param video_info_by_path:
+        :param video_infos:
         :return: list of segment indexes to extract
         """
         segments_per_minute = self.config.args.segments_per_minute
@@ -338,7 +309,7 @@ class IndexedEpisodeMatcher:
         return embeddings
 
     def get_query_results(self, progress: Progress,
-        embeddings: PathDict) -> dict[Path, list[Match]]:
+        embeddings: PathDict) -> dict[Path, list[IntervalMatch]]:
         query_progress = progress.add_task(f"Querying for: {self.series.name}",
                                            total=len(embeddings))
 

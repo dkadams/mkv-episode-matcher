@@ -59,6 +59,10 @@ class Series:
     def transcriptions_embeddings_dir(self):
         return self.transcriptions_dir / "embeddings"
 
+    @property
+    def matches_dir(self):
+        return self.dot_dir / "matches"
+
     @lru_cache
     @staticmethod
     def from_dir(series_dir: Path):
@@ -121,6 +125,9 @@ class Series:
 
     def transcription_file(self, input: Path) -> Path:
         return self.ensure_transcription_text_dir() / unique_filename(input, '.json')
+
+    def ensure_matches_dir(self) -> Path:
+        return self._ensure_dir(self.matches_dir)
 
     @staticmethod
     def transcription_file_name(input: Path) -> str:

@@ -7,10 +7,11 @@ from rich.console import Console
 
 from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
-from mkv_episode_matcher.subtitle_embeddings_extractor import SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.indexed_episode_matcher import Match, Score
+from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
 from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.subtitle_embeddings_extractor import \
+    SubtitleEmbeddingsExtractor
 
 console = Console()
 
@@ -44,37 +45,28 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
-        if isinstance(embeddings, Path):
-            embeddings = np.load(embeddings)
-
-        if not isinstance(embeddings, np.ndarray):
-            raise ValueError(f"Invalid embeddings: {embeddings}")
-
-        scores_by_episode: dict[EpisodeKey, Score] = {}
-        for interval, embedding in zip(embeddings["interval_index"], embeddings["embedding"]):
-            index_entry = self.indexes.get(interval)
+    def query_intervals(self, embeddings_path: Path,
+        max_results_per_query: int = 10) -> list[IntervalMatch]:
+        embeddings = np.load(embeddings_path)
+        results: list[IntervalMatch] = []
+        for interval_idx, embedding in zip(embeddings["interval_index"],
+                                           embeddings["embedding"]):
+            index_entry = self.indexes.get(interval_idx)
             if index_entry is None:
-                logger.warning(f"No index found for interval: {interval}")
+                logger.warning(f"No index found for interval: {interval_idx}")
                 continue
 
             directory, index = index_entry
-            ids, distances = index.get_nns_by_vector(embedding, 5,
+            ids, distances = index.get_nns_by_vector(embedding,
+                                                     max_results_per_query,
                                                      include_distances=True)
-            logger.info(f"Query: {interval} -> {ids} -> {distances}")
-            for id, distance in zip(ids, distances):
-                episode_id = directory[id]
 
-                cur = scores_by_episode.setdefault(episode_id, Score(0, 1000000))
-                score = Score(cur.count + 1, min(cur.min_distance, distance))
-                scores_by_episode[episode_id] = score
+            results.extend(IntervalMatch(embeddings_path, interval_idx,
+                                         directory[id], interval_idx,
+                                         distance)
+                           for id, distance in zip(ids, distances))
 
-        ordered_ep_id = sorted(scores_by_episode,
-                               # Order by frequency DESCENDING, distance ASCENDING
-                               key=lambda k: scores_by_episode[k])
-
-        return [Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
-                for ep_id in ordered_ep_id[:5]] # only return the top 5 results
+        return results
 
     def load_indexes(self):
         if not self.index_dir.exists():

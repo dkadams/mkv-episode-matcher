@@ -10,7 +10,7 @@ from mkv_episode_matcher.abstract_subtitle_index import (
     AbstractSubtitleIndexWriter,
 )
 from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.indexed_episode_matcher import Match, Score
+from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
 from mkv_episode_matcher.series import Series
 
 console = Console()
@@ -84,21 +84,16 @@ class ChromaSubtitleIndexWriter(ChromaSubtitleIndex, AbstractSubtitleIndexWriter
 
 
 class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
-    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
-        if isinstance(embeddings, Path):
-            embeddings = np.load(embeddings)
+    def query_intervals(self, embeddings_path: Path) -> list[IntervalMatch]:
+        embeddings = np.load(embeddings_path)
 
-        if not isinstance(embeddings, np.ndarray):
-            raise ValueError(f"Invalid embeddings: {embeddings}")
-
-        scores_by_episode: dict[EpisodeKey, Score] = {}
-
-        for interval, query_vector in zip(embeddings["interval_index"],
+        results: list[IntervalMatch] = []
+        for interval_idx, query_vector in zip(embeddings["interval_index"],
                                           embeddings["embedding"]):
 
             result = self.collection.query(
                 query_embeddings=[query_vector],
-                where={"interval": int(interval)},
+                where={"interval": int(interval_idx)},
                 n_results=5,
                 include=["metadatas", "distances"],
             )
@@ -106,7 +101,7 @@ class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
             metadatas = result.get("metadatas") or []
             distances = result.get("distances") or []
             if not metadatas or not distances:
-                logger.warning(f"No Chroma results for interval: {interval}")
+                logger.warning(f"No Chroma results for interval: {interval_idx}")
                 continue
 
             for metadata, distance in zip(metadatas[0], distances[0]):
@@ -119,16 +114,11 @@ class ChromaSubtitleIndexReader(ChromaSubtitleIndex):
                     continue
 
                 key = EpisodeKey(int(season), int(episode))
-                current = scores_by_episode.setdefault(key, Score(0, 1000000))
-                scores_by_episode[key] = Score(
-                    current.count + 1, min(current.min_distance, float(distance))
-                )
+                results.append(IntervalMatch(embeddings_path, interval_idx,
+                                             key, interval_idx,
+                                             distance))
 
-        ordered_ep_id = sorted(scores_by_episode, key=lambda k: scores_by_episode[k])
-        return [
-            Match(ep_id[0], ep_id[1], scores_by_episode[ep_id])
-            for ep_id in ordered_ep_id[:5]
-        ]
+        return results
 
 
 ChromaSubtitleIndex.reader_type = ChromaSubtitleIndexReader

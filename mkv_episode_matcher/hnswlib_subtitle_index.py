@@ -7,10 +7,11 @@ from rich.console import Console
 
 from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
-from mkv_episode_matcher.subtitle_embeddings_extractor import SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.episode import EpisodeKey
-from mkv_episode_matcher.indexed_episode_matcher import Match, Score
+from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
 from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.subtitle_embeddings_extractor import \
+    SubtitleEmbeddingsExtractor
 
 console = Console()
 
@@ -52,51 +53,41 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
 
         self.indexes = self.load_indexes()
 
-    def query_intervals(self, embeddings: Path | np.ndarray) -> list[Match]:
-        if isinstance(embeddings, Path):
-            embeddings = np.load(embeddings)
+    def query_intervals(self, embeddings_path: Path,
+        max_results_per_query: int = 10) -> list[IntervalMatch]:
+        embeddings = np.load(embeddings_path)
 
-        if not isinstance(embeddings, np.ndarray):
-            raise ValueError(f"Invalid embeddings: {embeddings}")
-
-        distances_by_episode: dict[EpisodeKey, Score] = {}
-        for interval, embedding in zip(embeddings["interval_index"], embeddings["embedding"]):
-            if not interval in self.indexes:
-                logger.warning(f"No index found for interval: {interval}")
+        results: list[IntervalMatch] = []
+        for interval_idx, embedding in zip(embeddings["interval_index"],
+                                           embeddings["embedding"]):
+            if not interval_idx in self.indexes:
+                logger.warning(f"No index found for interval: {interval_idx}")
                 continue
 
-            directory, index = self.indexes.get(interval)
+            directory, index = self.indexes.get(interval_idx)
 
             # Avoid asking for more results than are available. Doing so causes
             # hnswlib to throw this RuntimeError:
             #   Cannot return the results in a contiguous 2D array. Probably
             #       ef or M is too small
-            neighbor_count = min(5, index.get_current_count())
+            neighbor_count = min(max_results_per_query, index.get_current_count())
             if neighbor_count == 0:
                 logger.warning(
-                    f"Index metadata empty for interval: {interval}, skipping query"
+                    f"Index empty for interval: {interval_idx}, skipping."
                 )
                 continue
 
             ids_by_q, dists_by_q = index.knn_query(embedding, k=neighbor_count,
-                                             num_threads=1, filter=None)
+                                                    num_threads=1, filter=None)
             # knn_query supports multiple queries, but we only have one. So
             # there'll only be one result.
             ids, distances = ids_by_q[0], dists_by_q[0]
-            episode_keys = [directory[id] for id in ids if id != -1]
-            if len(episode_keys) == 0 or len(distances) == 0:
-                continue
+            results.extend(IntervalMatch(embeddings_path, interval_idx,
+                                         directory[id], interval_idx,
+                                         distance)
+                           for id, distance in zip(ids, distances))
+        return results
 
-            for key, distance in zip(episode_keys, distances):
-                cur = distances_by_episode.setdefault(key, Score(0, 1000000))
-                score = Score(cur.count + 1, min(cur.min_distance, distance))
-                distances_by_episode[key] = score
-
-        ordered_keys = sorted(distances_by_episode,
-                              key=lambda k: distances_by_episode[k])
-
-        return [Match(key.season_number, key.episode_number, distances_by_episode[key])
-                for key in ordered_keys[:5]]
 
     def load_indexes(self) -> dict[int, tuple[dict[int, EpisodeKey], hnswlib.Index]]:
         if not self.index_dir.exists():
