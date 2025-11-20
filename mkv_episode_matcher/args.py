@@ -168,6 +168,11 @@ def add_match(subparsers, config_parser, index_parser):
                               default=.5,
                               help="Number of segments to extract per minute (default: .5)")
 
+    match_parser.add_argument('--num-matches','-n',
+                              type=int,
+                              default=5,
+                              help="Number of matches to show (default: 5)")
+
     xscriber_group = match_parser.add_mutually_exclusive_group()
     xscriber_group.add_argument(
         "--whisper", dest="transcriber",
