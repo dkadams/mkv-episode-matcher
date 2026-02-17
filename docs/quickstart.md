@@ -4,57 +4,53 @@ Get started with MKV Episode Matcher quickly and efficiently.
 
 ## Basic Usage
 
-### 1. Onboarding (First-Time Setup)
+### 1. Configure API credentials (first-time setup)
 
-Before running any matching, set up your configuration:
 ```bash
-mkv-match --onboard
+mkv-episode-matcher config
 ```
+
 You will be prompted for:
-- TMDb API key (for episode matching)
-- OpenSubtitles API key, Consumer Name, Username, and Password (for subtitle downloads)
-- Show Directory (main directory of your show)
-If a value already exists, you can accept the default or enter a new value.
 
-You can re-run onboarding at any time to update your credentials or show directory.
+- TMDb API key (required)
+- OpenSubtitles API key, consumer name, username, and password (required for subtitle downloads)
 
-### 2. Interactive Mode
+The configuration file is stored at `~/.mkv-episode-matcher/config.ini` by default.
 
-Simply run:
+### 2. Initialize your series directory
+
+Point the tool at the root directory of a TV series and initialize it:
+
 ```bash
-mkv-match
-```
-The program will guide you through the setup interactively if configuration is missing.
-
-### 3. Command Line Options
-
-Process a specific season:
-```bash
-mkv-match --show-dir "/path/to/show" --season 1
+mkv-episode-matcher init-series "/path/to/Series"
 ```
 
-Process all seasons with subtitles (requires onboarding):
+This creates a `.mkv-episode-matcher/` directory inside the series folder with metadata and settings.
+
+### 3. (Optional) Download subtitles
+
 ```bash
-mkv-match --show-dir "/path/to/show" --get-subs
+mkv-episode-matcher fetch-subs "/path/to/Series"
 ```
 
-Test run with detailed output:
+### 4. Build subtitle indexes
+
 ```bash
-mkv-match --show-dir "/path/to/show" --dry-run --verbose
+mkv-episode-matcher index-subs "/path/to/Series"
 ```
 
-## Key Features
+### 5. Match video files
 
-- Interactive setup
-- Progress bars with ETA
-- Detailed matching information
-- Confidence-based matching
-- Automatic subtitle downloads
-- GPU acceleration support
+Provide one or more video files or directories to match:
+
+```bash
+mkv-episode-matcher match "/path/to/Series" "/path/to/Videos"
+```
 
 ## Directory Structure
 
 Expected TV show organization:
+
 ```
 Show Name/
 ├── Season 1/
@@ -67,41 +63,20 @@ Show Name/
 
 ## Configuration
 
-Configuration is stored at `~/.mkv-episode-matcher/config.ini` and can be set up or updated at any time with:
+Configuration can be updated any time with:
+
 ```bash
-mkv-match --onboard
+mkv-episode-matcher config
 ```
 
-Example config:
-```ini
-[Config]
-tmdb_api_key = your_tmdb_api_key
-show_dir = /path/to/show
-open_subtitles_api_key = your_opensubs_key
-open_subtitles_user_agent = your_user_agent
-open_subtitles_username = your_username
-open_subtitles_password = your_password
-```
+You can also override the config file path:
 
-## Common Commands
-
-### Check GPU Support
 ```bash
-mkv-match --check-gpu true
-```
-
-### Set Confidence Level
-```bash
-mkv-match --show-dir "/path/to/show" --confidence 0.8
-```
-
-### Enable Verbose Output
-```bash
-mkv-match --show-dir "/path/to/show" --verbose true
+mkv-episode-matcher config --config "/custom/path/config.ini"
 ```
 
 ## Next Steps
 
 - Read [Installation Guide](installation.md) for setup details
+- See [Command Line Interface](cli.md) for all commands and options
 - Check [Tips and Tricks](tips.md) for advanced usage
-- See [API Reference](api/index.md) for development

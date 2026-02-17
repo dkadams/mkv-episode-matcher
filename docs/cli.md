@@ -1,74 +1,120 @@
 # Command Line Interface
 
-The CLI features a rich, user-friendly interface with color-coded output and progress indicators.
+MKV Episode Matcher uses a subcommand-based CLI.
 
-## Basic Commands
-
-### Process Show
+## Usage
 
 ```bash
-mkv-match --show-dir "/path/to/show"
+mkv-episode-matcher <command> [options]
 ```
 
-### Process Specific Season
+Global options:
+
+- `--version`: Show the version and exit
+- `--verbose`, `-v`: Enable verbose output
+
+Many commands also accept configuration overrides (see `config` below).
+
+## Commands
+
+### `config` (aliases: `onboard`)
+Interactive configuration for API credentials.
 
 ```bash
-mkv-match --show-dir "/path/to/show" --season 1
+mkv-episode-matcher config
+mkv-episode-matcher onboard
 ```
 
-## Command Options
+Options:
 
-| Option           | Description                 | Default    |
-| ---------------- | --------------------------- | ---------- |
-| `--show-dir`     | Show directory path         | None       |
-| `--season`       | Season number to process    | None (all) |
-| `--dry-run`      | Test without making changes | False      |
-| `--get-subs`     | Download subtitles          | False      |
-| `--tmdb-api-key` | TMDb API key                | None       |
+- `--config`, `-c`: Path to `config.ini` (default: `~/.mkv-episode-matcher/config.ini`)
+- `--tmdb-api-key`
+- `--open_subtitles_api_key`
+- `--open_subtitles_user_agent`
+- `--open_subtitles_username`
+- `--open_subtitles_password`
 
-## Examples
-
-### Dry Run Mode
+### `init-series`
+Initialize a series directory with metadata from TMDb.
 
 ```bash
-mkv-match --show-dir "/path/to/show" --dry-run
+mkv-episode-matcher init-series /path/to/Series
 ```
 
-### Download Subtitles
+Options:
+
+- `--name`: Series name (defaults to directory name)
+- `--id`: TMDb series id (skip search prompt)
+- `--refresh`: Re-fetch series details
+- `--segment-duration`: Segment duration in seconds (default: `30`)
+- `--random-seed`: Random seed for segment selection (default: `12345`)
+
+### `fetch-subs`
+Download subtitles for a series from OpenSubtitles.
 
 ```bash
-mkv-match --show-dir "/path/to/show" --get-subs
+mkv-episode-matcher fetch-subs /path/to/Series
 ```
 
-### Set API Key
+Options:
+
+- `--refresh`: Download even if subtitles exist
+- `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
+
+### `index-subs`
+Build subtitle indexes for a series.
 
 ```bash
-mkv-match --show-dir "/path/to/show" --tmdb-api-key "your_key"
+mkv-episode-matcher index-subs /path/to/Series
 ```
 
-### Multiple Options
+Options:
+
+- `--rebuild`: Rebuild indexes from scratch
+- `--chroma`, `--annoy`, `--hnswlib`: Select index backend (default: hnswlib)
+- `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
+
+### `match`
+Match video files against the indexed subtitle data.
 
 ```bash
-mkv-match \
-  --show-dir "/path/to/show" \
-  --season 1 \
-  --get-subs \
-  --dry-run
+mkv-episode-matcher match /path/to/Series /path/to/videos
+```
+
+Options:
+
+- `--segments-per-minute`: Controls how many segments are transcribed (default: `0.5`)
+- `--num-matches`, `-n`: Number of top matches to show (default: `5`)
+- `--confidence`: Confidence threshold (default: `0.7`)
+- `--no-transcription-cache`: Disable reusing cached transcriptions
+- `--display-by-episode`, `-E`: Show results grouped by episode (default)
+- `--display-by-file`, `-F`: Show results grouped by file
+- `--whisper`, `--faster-whisper`, `--whispercpp-cli`, `--whisperkit-cli`: Transcriber backend (default: whisper.cpp CLI)
+
+## Episode Specifiers
+
+Commands that support `--episodes SEASON:SPEC` accept:
+
+- `N` (single episode)
+- `A,B,C` (list)
+- `A-B`, `-B`, `A-` (range)
+- `*` (all)
+
+Examples:
+
+```bash
+mkv-episode-matcher fetch-subs /path/to/Series --episodes 1:1 2:1,2 3:5-8
 ```
 
 ## Logging
 
 Logs are stored in:
+
 ```
 ~/.mkv-episode-matcher/logs/
-├── stdout.log
-└── stderr.log
 ```
 
-## Tips
+Files are written per run with timestamps, for example:
 
-1. Always use quotes around paths
-2. Use dry-run first to test
-3. Check logs for details
-4. Use full paths for reliability
-5. Avoid using a trailing slash in paths
+- `stdout-YYYYMMDDTHHmmss.log`
+- `stderr-YYYYMMDDTHHmmss.log`

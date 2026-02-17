@@ -62,6 +62,7 @@ nav:
   - Advanced Usage:
       - Command Line Interface: cli.md
       - Tips and Tricks: tips.md
+      - Data Directory: data-directory.md
 
 markdown_extensions:
   - tables
