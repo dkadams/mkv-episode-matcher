@@ -1,6 +1,7 @@
 import argparse
 from configparser import ConfigParser
 
+import mkv_episode_matcher.config as config_module
 from mkv_episode_matcher.config import (
     API_CONFIG_KEYS,
     CONFIG_FILE,
@@ -140,3 +141,92 @@ def test_configuration_has_required_settings_false_when_missing():
     parser["api"]["open_subtitles_password"] = ""
     cfg = Configuration(args=argparse.Namespace(), stored=parser)
     assert cfg.has_required_settings() is False
+
+
+def test_edit_config_uses_existing_values_when_confirmed(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(config_file=config_file)
+
+    parser = ConfigParser()
+    parser["api"] = {
+        "tmdb_api_key": "tmdb_existing",
+        "open_subtitles_api_key": "os_key_existing",
+        "open_subtitles_user_agent": "os_agent_existing",
+        "open_subtitles_username": "os_user_existing",
+        "open_subtitles_password": "os_pass_existing",
+    }
+    existing = Configuration(args=args, stored=parser)
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: existing)
+    monkeypatch.setattr(config_module.Confirm, "ask", lambda *_, **__: True)
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    captured = {}
+
+    def fake_store(*store_args):
+        captured["args"] = store_args
+
+    monkeypatch.setattr(config_module, "store_api_config", fake_store)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+
+    assert captured["args"] == (
+        "tmdb_existing",
+        "os_key_existing",
+        "os_agent_existing",
+        "os_user_existing",
+        "os_pass_existing",
+        config_file,
+    )
+
+
+def test_edit_config_prompts_for_missing_values(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(config_file=config_file)
+    empty = Configuration(args=args, stored=ConfigParser())
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: empty)
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    asked_confirm = {"count": 0}
+
+    def fake_confirm(*_, **__):
+        asked_confirm["count"] += 1
+        return False
+
+    monkeypatch.setattr(config_module.Confirm, "ask", fake_confirm)
+
+    prompted_values = iter(
+        [
+            "tmdb_prompted",
+            "os_user_prompted",
+            "os_pass_prompted",
+            "os_agent_prompted",
+            "os_key_prompted",
+        ]
+    )
+    monkeypatch.setattr(config_module.Prompt, "ask", lambda *_, **__: next(prompted_values))
+
+    captured = {}
+
+    def fake_store(*store_args):
+        captured["args"] = store_args
+
+    monkeypatch.setattr(config_module, "store_api_config", fake_store)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+
+    assert asked_confirm["count"] == 0
+    assert captured["args"] == (
+        "tmdb_prompted",
+        "os_key_prompted",
+        "os_agent_prompted",
+        "os_user_prompted",
+        "os_pass_prompted",
+        config_file,
+    )

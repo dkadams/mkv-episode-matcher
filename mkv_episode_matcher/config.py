@@ -72,7 +72,7 @@ def edit_config(config):
     config = _get_config(config_file, config.args)
 
     def ask_with_default(prompt_text, key, description, secret=False):
-        current = config.get(key)
+        current = config.stored.get("api", key, fallback=None)
         if current:
             console.print(f"[cyan]{prompt_text}:[/cyan] {description}")
             console.print(f"Current value: [green]{mask_api_key(current) if secret else current}[/green]")
