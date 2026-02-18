@@ -1,5 +1,6 @@
 import argparse
 from configparser import ConfigParser
+import os
 
 import mkv_episode_matcher.config as config_module
 from mkv_episode_matcher.config import (
@@ -8,7 +9,10 @@ from mkv_episode_matcher.config import (
     DEFAULT_LOG_DIR,
     Configuration,
     _get_config,
+    backup_config_file,
     get_config_file,
+    MAX_CONFIG_BACKUPS,
+    prune_config_backups,
     read_config,
     resolve_log_dir,
     store_api_config,
@@ -143,6 +147,41 @@ def test_configuration_has_required_settings_false_when_missing():
     assert cfg.has_required_settings() is False
 
 
+def test_backup_config_file_creates_timestamped_copy(tmp_path):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[api]\ntmdb_api_key = test\n", encoding="utf-8")
+
+    backup = backup_config_file(config_file)
+    assert backup is not None
+    assert backup.exists()
+    assert backup.name.startswith("config.ini.bak.")
+    assert backup.read_text(encoding="utf-8") == config_file.read_text(encoding="utf-8")
+
+
+def test_backup_config_file_returns_none_when_source_missing(tmp_path):
+    missing = tmp_path / "config.ini"
+    assert backup_config_file(missing) is None
+
+
+def test_prune_config_backups_keeps_max_10(tmp_path):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[api]\n", encoding="utf-8")
+
+    backups = []
+    for i in range(MAX_CONFIG_BACKUPS + 2):
+        backup = tmp_path / f"config.ini.bak.20200101T0000{i:02d}"
+        backup.write_text(str(i), encoding="utf-8")
+        os.utime(backup, (1000 + i, 1000 + i))
+        backups.append(backup)
+
+    prune_config_backups(config_file, MAX_CONFIG_BACKUPS)
+
+    remaining = list(tmp_path.glob("config.ini.bak.*"))
+    assert len(remaining) == MAX_CONFIG_BACKUPS
+    assert backups[0] not in remaining
+    assert backups[1] not in remaining
+
+
 def test_edit_config_uses_existing_values_when_confirmed(tmp_path, monkeypatch):
     config_file = tmp_path / "config.ini"
     args = argparse.Namespace(config_file=config_file)
@@ -166,6 +205,130 @@ def test_edit_config_uses_existing_values_when_confirmed(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
 
+    monkeypatch.setattr(
+        config_module,
+        "backup_config_file",
+        lambda *_: (_ for _ in ()).throw(AssertionError("backup_config_file should not be called")),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "store_api_config",
+        lambda *_: (_ for _ in ()).throw(AssertionError("store_api_config should not be called")),
+    )
+
+    messages = []
+    monkeypatch.setattr(config_module.console, "print", lambda *msg, **__: messages.append(msg))
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    assert any("No configuration changes detected." in part for msg in messages for part in msg)
+
+
+def test_edit_config_aborts_when_backup_fails(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[api]\ntmdb_api_key = existing\n", encoding="utf-8")
+    args = argparse.Namespace(config_file=config_file)
+
+    parser = ConfigParser()
+    parser["api"] = {key: "x" for key in API_CONFIG_KEYS}
+    existing = Configuration(args=args, stored=parser)
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: existing)
+    monkeypatch.setattr(config_module.Confirm, "ask", lambda *_, **__: False)
+    monkeypatch.setattr(config_module.Prompt, "ask", lambda *_, **__: "changed")
+
+    messages = []
+    monkeypatch.setattr(config_module.console, "print", lambda *msg, **__: messages.append(msg))
+
+    monkeypatch.setattr(
+        config_module,
+        "backup_config_file",
+        lambda *_: (_ for _ in ()).throw(OSError("disk full")),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "store_api_config",
+        lambda *_: (_ for _ in ()).throw(AssertionError("store_api_config should not be called")),
+    )
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    assert any("Failed to backup configuration" in part for msg in messages for part in msg)
+
+
+def test_edit_config_skips_backup_and_write_when_unchanged(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(config_file=config_file)
+
+    parser = ConfigParser()
+    parser["api"] = {
+        "tmdb_api_key": "tmdb_existing",
+        "open_subtitles_api_key": "os_key_existing",
+        "open_subtitles_user_agent": "os_agent_existing",
+        "open_subtitles_username": "os_user_existing",
+        "open_subtitles_password": "os_pass_existing",
+    }
+    existing = Configuration(args=args, stored=parser)
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: existing)
+    monkeypatch.setattr(config_module.Confirm, "ask", lambda *_, **__: True)
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+
+    messages = []
+    monkeypatch.setattr(config_module.console, "print", lambda *msg, **__: messages.append(msg))
+    monkeypatch.setattr(
+        config_module,
+        "backup_config_file",
+        lambda *_: (_ for _ in ()).throw(AssertionError("backup_config_file should not be called")),
+    )
+    monkeypatch.setattr(
+        config_module,
+        "store_api_config",
+        lambda *_: (_ for _ in ()).throw(AssertionError("store_api_config should not be called")),
+    )
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    assert any("No configuration changes detected." in part for msg in messages for part in msg)
+
+
+def test_edit_config_backs_up_and_writes_when_changed(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(config_file=config_file)
+
+    parser = ConfigParser()
+    parser["api"] = {
+        "tmdb_api_key": "tmdb_existing",
+        "open_subtitles_api_key": "os_key_existing",
+        "open_subtitles_user_agent": "os_agent_existing",
+        "open_subtitles_username": "os_user_existing",
+        "open_subtitles_password": "os_pass_existing",
+    }
+    existing = Configuration(args=args, stored=parser)
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: existing)
+    monkeypatch.setattr(config_module.Confirm, "ask", lambda *_, **__: False)
+    prompted_values = iter(
+        [
+            "tmdb_changed",
+            "os_user_changed",
+            "os_pass_changed",
+            "os_agent_changed",
+            "os_key_changed",
+        ]
+    )
+    monkeypatch.setattr(config_module.Prompt, "ask", lambda *_, **__: next(prompted_values))
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    backup_called = {"count": 0}
+
+    def fake_backup(path):
+        backup_called["count"] += 1
+        return path.parent / "config.ini.bak.20260101T000000"
+
+    monkeypatch.setattr(config_module, "backup_config_file", fake_backup)
+
     captured = {}
 
     def fake_store(*store_args):
@@ -175,12 +338,13 @@ def test_edit_config_uses_existing_values_when_confirmed(tmp_path, monkeypatch):
 
     config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
 
+    assert backup_called["count"] == 1
     assert captured["args"] == (
-        "tmdb_existing",
-        "os_key_existing",
-        "os_agent_existing",
-        "os_user_existing",
-        "os_pass_existing",
+        "tmdb_changed",
+        "os_key_changed",
+        "os_agent_changed",
+        "os_user_changed",
+        "os_pass_changed",
         config_file,
     )
 

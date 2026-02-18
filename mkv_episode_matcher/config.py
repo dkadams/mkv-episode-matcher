@@ -3,7 +3,9 @@ import configparser
 from argparse import Namespace
 from configparser import ConfigParser
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+import shutil
 
 from loguru import logger
 from rich.console import Console
@@ -27,6 +29,7 @@ API_CONFIG_KEYS = [
     "open_subtitles_password"
 ]
 DEFAULT_LOG_DIR = CONFIG_DIR / "logs"
+MAX_CONFIG_BACKUPS = 10
 
 @dataclass
 class Configuration:
@@ -86,6 +89,31 @@ def edit_config(config):
     open_subtitles_user_agent = ask_with_default("OpenSubtitles Consumer Name", "open_subtitles_user_agent", "Required for subtitle downloads. Go to https://www.opensubtitles.com/en/consumers, click 'New Consumer', give it a name, then click 'Save'")
     open_subtitles_api_key = ask_with_default("OpenSubtitles API key", "open_subtitles_api_key", "Required for subtitle downloads. Enter the API key linked with the OpenSubtitles Consumer that you created in the previous step.", secret=True)
 
+    new_api_config = {
+        "tmdb_api_key": str(tmdb_api_key),
+        "open_subtitles_api_key": str(open_subtitles_api_key),
+        "open_subtitles_user_agent": str(open_subtitles_user_agent),
+        "open_subtitles_username": str(open_subtitles_username),
+        "open_subtitles_password": str(open_subtitles_password),
+    }
+    current_api_config = {
+        k: config.stored.get("api", k, fallback="")
+        for k in new_api_config
+    }
+    if new_api_config == current_api_config:
+        logger.info("No configuration changes detected; skipping backup and write")
+        console.print("[yellow]No configuration changes detected.[/yellow]")
+        return
+
+    try:
+        backup_path = backup_config_file(config_file)
+        if backup_path:
+            logger.info(f"Backed up configuration to {backup_path}")
+    except OSError as e:
+        console.print(f"[bold red]Error:[/bold red] Failed to backup configuration: {e}")
+        logger.error(f"Failed to backup config before write: {e}")
+        return
+
     store_api_config(
         tmdb_api_key,
         open_subtitles_api_key,
@@ -95,6 +123,29 @@ def edit_config(config):
         config_file,
     )
     console.print("[bold green]Configuration saved.[/bold green]")
+
+
+def backup_config_file(file: Path) -> Path | None:
+    path = Path(file)
+    if not path.exists():
+        return None
+
+    timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+    backup_path = path.with_name(f"{path.name}.bak.{timestamp}")
+    shutil.copy2(path, backup_path)
+    prune_config_backups(path, MAX_CONFIG_BACKUPS)
+    return backup_path
+
+
+def prune_config_backups(file: Path, keep: int):
+    path = Path(file)
+    backups = sorted(
+        path.parent.glob(f"{path.name}.bak.*"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for backup in backups[keep:]:
+        backup.unlink()
 
 def get_config_file(args):
     if args.config_file:
