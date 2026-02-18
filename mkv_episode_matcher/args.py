@@ -5,6 +5,7 @@ from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndex
 from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
 from mkv_episode_matcher.dataset_collector import collect_dataset
+from mkv_episode_matcher.dataset_evaluator import evaluate_dataset
 from mkv_episode_matcher.episode_matcher import match_episodes
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
@@ -47,6 +48,7 @@ def build_args_parser():
         episode_parser,
         index_parser,
     )
+    add_evaluate_dataset(subparsers, config_parser)
     add_match(subparsers, config_parser, index_parser)
 
     # fetch/match/rename
@@ -199,6 +201,48 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
         func=collect_dataset,
         transcriber=WhispercppCliTranscriber,
     )
+
+def add_evaluate_dataset(subparsers, config_parser):
+    evaluate_parser = subparsers.add_parser(
+        "evaluate-dataset",
+        parents=[config_parser],
+        help="Evaluate transcript-to-subtitle matching quality from a collected dataset",
+    )
+
+    evaluate_parser.add_argument(
+        "dataset_dir",
+        help="Path to a dataset directory created by collect-dataset",
+    )
+    evaluate_parser.add_argument(
+        "--output",
+        help="Optional path to write JSON report output",
+    )
+    evaluate_parser.add_argument(
+        "--segment-duration",
+        type=int,
+        default=None,
+        help="Override segment duration in seconds (defaults to meta.json or 30)",
+    )
+    evaluate_parser.add_argument(
+        "--top-k",
+        type=int,
+        nargs="+",
+        default=[1, 3, 5],
+        help="Top-k values to report",
+    )
+    evaluate_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Evaluate only the first N dataset segments",
+    )
+    evaluate_parser.add_argument(
+        "--show-failures",
+        type=int,
+        default=20,
+        help="Maximum failed examples to include in report output",
+    )
+    evaluate_parser.set_defaults(func=evaluate_dataset)
 
 
 def add_match(subparsers, config_parser, index_parser):
