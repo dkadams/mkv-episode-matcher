@@ -20,9 +20,21 @@ This directory is created automatically whenever the configuration module is loa
 
 ### Location configuration
 
-The base directory **is not configurable**. Logs are always written under `~/.mkv-episode-matcher/logs/` (or the Windows equivalent).
+The base directory **is not configurable**.
 
 You *can* choose a different **configuration file path** by passing `--config /path/to/config.ini`, but that only changes where the config file is read/written. It does **not** move the logs directory or other user-level files.
+
+The logs directory is configurable:
+
+- Per-run override: `--log-dir /path/to/logs`
+- Persistent config:
+
+```ini
+[logging]
+log_dir = /path/to/logs
+```
+
+Precedence is `--log-dir` > `config.ini` > default `~/.mkv-episode-matcher/logs/`.
 
 ### Contents
 

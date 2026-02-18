@@ -4,10 +4,12 @@ from configparser import ConfigParser
 from mkv_episode_matcher.config import (
     API_CONFIG_KEYS,
     CONFIG_FILE,
+    DEFAULT_LOG_DIR,
     Configuration,
     _get_config,
     get_config_file,
     read_config,
+    resolve_log_dir,
     store_api_config,
 )
 
@@ -36,6 +38,18 @@ def test_store_api_config_round_trip(tmp_path):
     assert parsed is not None
     assert parsed.get("api", "tmdb_api_key") == "tmdb"
     assert parsed.get("api", "open_subtitles_password") == "os_pass"
+
+
+def test_store_api_config_preserves_existing_logging_section(tmp_path):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[logging]\nlog_dir = /tmp/logs\n", encoding="utf-8")
+
+    _write_api_config(config_file)
+
+    parsed = read_config(config_file)
+    assert parsed is not None
+    assert parsed.get("logging", "log_dir") == "/tmp/logs"
+    assert parsed.get("api", "tmdb_api_key") == "tmdb"
 
 
 def test_get_config_file_uses_arg_when_present(tmp_path):
@@ -90,6 +104,27 @@ def test_get_config_ignores_unrelated_args(tmp_path):
     args = argparse.Namespace(series_dirs=["/tmp/show"], verbose=True)
     config = _get_config(config_file, args)
     assert config.stored.get("api", "tmdb_api_key") == "tmdb"
+
+
+def test_resolve_log_dir_uses_cli_override(tmp_path):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[logging]\nlog_dir = /tmp/from-config\n", encoding="utf-8")
+
+    args = argparse.Namespace(config_file=config_file, log_dir="/tmp/from-cli")
+    assert str(resolve_log_dir(args)) == "/tmp/from-cli"
+
+
+def test_resolve_log_dir_uses_config_when_cli_missing(tmp_path):
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[logging]\nlog_dir = /tmp/from-config\n", encoding="utf-8")
+
+    args = argparse.Namespace(config_file=config_file, log_dir=None)
+    assert str(resolve_log_dir(args)) == "/tmp/from-config"
+
+
+def test_resolve_log_dir_falls_back_to_default(tmp_path):
+    args = argparse.Namespace(config_file=tmp_path / "missing.ini", log_dir=None)
+    assert resolve_log_dir(args) == DEFAULT_LOG_DIR
 
 
 def test_configuration_has_required_settings_true():

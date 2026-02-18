@@ -1,12 +1,13 @@
 # __main__.py (enhanced version)
 import os
 import sys
+from pathlib import Path
 
 from loguru import logger
 from rich.console import Console
 
 from mkv_episode_matcher.args import build_args_parser
-from mkv_episode_matcher.config import CONFIG_DIR, get_config
+from mkv_episode_matcher.config import get_config, resolve_log_dir
 
 # Disable Hugging Face tokenizers' internal multithreading. This is a transitive
 # dependency of SentenceTransformers used for embedding, and the original Whisper
@@ -20,23 +21,31 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 # Initialize rich console for better output
 console = Console()
 
-# Check if logs directory exists, if not create it
-log_dir = CONFIG_DIR / "logs"
-if not log_dir.exists():
-    log_dir.mkdir(exist_ok=True)
-logger.remove()
-# Add a new handler for stdout logs
-logger.add(
-    str(log_dir / "stdout-{time:YYYYMMDDTHHmmss}.log"),
-    format="{time} {level} {message}",
-    level="INFO",
-    retention=10,
-)
+def configure_bootstrap_logging():
+    """Setup temporary logging to stderr before args/config are available."""
+    logger.remove()
+    logger.add(sys.stderr, format="{time} {level} {message}", level="INFO")
 
-# Add a new handler for error logs
-logger.add(str(log_dir / "stderr-{time:YYYYMMDDTHHmmss}.log"),
-           level="ERROR",
-           retention=10)
+
+def configure_file_logging(log_dir: Path) -> Path:
+    """Switch logging from stderr to per-run log files."""
+    resolved = Path(log_dir).expanduser()
+    resolved.mkdir(parents=True, exist_ok=True)
+
+    logger.remove()
+    logger.add(
+        str(resolved / "stdout-{time:YYYYMMDDTHHmmss}.log"),
+        format="{time} {level} {message}",
+        level="INFO",
+        retention=10,
+    )
+    logger.add(
+        str(resolved / "stderr-{time:YYYYMMDDTHHmmss}.log"),
+        level="ERROR",
+        retention=10,
+    )
+
+    return resolved
 
 @logger.catch
 def main():
@@ -46,6 +55,15 @@ def main():
 
     parser = build_args_parser()
     args = parser.parse_args()
+
+    try:
+        log_dir = configure_file_logging(resolve_log_dir(args))
+        logger.info(f"Using log directory: {log_dir}")
+    except OSError as e:
+        logger.warning(
+            f"Failed to initialize log directory from configuration: {e}. "
+            "Continuing with stderr logging only."
+        )
 
     logger.info(f"Command-line arguments: {args}")
     if args.verbose:
@@ -61,6 +79,8 @@ def main():
 
 # Run the main function if the script is run directly
 if __name__ == "__main__":
+    configure_bootstrap_logging()
+
     # Log the start of the application
     logger.info("Starting mkv-episode-matcher")
 

@@ -12,6 +12,7 @@ Global options:
 
 - `--version`: Show the version and exit
 - `--verbose`, `-v`: Enable verbose output
+- `--log-dir`: Directory where logs are written for this run (overrides config file)
 
 Many commands also accept configuration overrides (see `config` below).
 
@@ -108,7 +109,7 @@ mkv-episode-matcher fetch-subs /path/to/Series --episodes 1:1 2:1,2 3:5-8
 
 ## Logging
 
-Logs are stored in:
+By default, logs are stored in:
 
 ```
 ~/.mkv-episode-matcher/logs/
@@ -118,3 +119,15 @@ Files are written per run with timestamps, for example:
 
 - `stdout-YYYYMMDDTHHmmss.log`
 - `stderr-YYYYMMDDTHHmmss.log`
+
+You can change the log directory using either:
+
+- CLI for one run: `--log-dir /path/to/logs`
+- `config.ini`:
+
+```ini
+[logging]
+log_dir = /path/to/logs
+```
+
+Precedence is `--log-dir` > `config.ini` > default path.

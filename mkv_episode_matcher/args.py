@@ -89,6 +89,15 @@ def get_root_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable verbose output",
     )
+    parser.add_argument(
+        "--log-dir",
+        default=argparse.SUPPRESS,
+        help=(
+            "Directory where log files are written for this run "
+            "(overrides config; otherwise uses [logging].log_dir or "
+            "~/.mkv-episode-matcher/logs)"
+        ),
+    )
     return parser
 
 

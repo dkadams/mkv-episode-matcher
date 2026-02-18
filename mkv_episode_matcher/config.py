@@ -26,6 +26,7 @@ API_CONFIG_KEYS = [
     "open_subtitles_username",
     "open_subtitles_password"
 ]
+DEFAULT_LOG_DIR = CONFIG_DIR / "logs"
 
 @dataclass
 class Configuration:
@@ -101,6 +102,21 @@ def get_config_file(args):
     else:
         return CONFIG_FILE
 
+
+def resolve_log_dir(args):
+    cli_log_dir = getattr(args, "log_dir", None)
+    if cli_log_dir:
+        return Path(cli_log_dir).expanduser()
+
+    config_file = get_config_file(args)
+    parser = read_config(config_file)
+    if parser and parser.has_option("logging", "log_dir"):
+        stored_log_dir = parser.get("logging", "log_dir").strip()
+        if stored_log_dir:
+            return Path(stored_log_dir).expanduser()
+
+    return DEFAULT_LOG_DIR
+
 def mask_api_key(key: str) -> str:
     """Mask the API key for display purposes."""
     if not key:
@@ -131,7 +147,7 @@ def store_api_config(
     Returns:
         None
     """
-    config = configparser.ConfigParser(interpolation=None)
+    config = read_config(file) or configparser.ConfigParser(interpolation=None)
     config["api"] = {
         "tmdb_api_key": str(tmdb_api_key),
         "open_subtitles_api_key": str(open_subtitles_api_key),
