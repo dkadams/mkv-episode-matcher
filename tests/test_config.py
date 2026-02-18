@@ -205,6 +205,7 @@ def test_prune_config_backups_keeps_max_10(tmp_path):
 def test_edit_config_uses_existing_values_when_confirmed(tmp_path, monkeypatch):
     config_file = tmp_path / "config.ini"
     args = argparse.Namespace(config_file=config_file)
+    _write_api_config(config_file, suffix="_existing")
 
     parser = ConfigParser()
     parser["api"] = {
@@ -277,6 +278,7 @@ def test_edit_config_aborts_when_backup_fails(tmp_path, monkeypatch):
 def test_edit_config_skips_backup_and_write_when_unchanged(tmp_path, monkeypatch):
     config_file = tmp_path / "config.ini"
     args = argparse.Namespace(config_file=config_file)
+    _write_api_config(config_file, suffix="_existing")
 
     parser = ConfigParser()
     parser["api"] = {
@@ -316,6 +318,7 @@ def test_edit_config_skips_backup_and_write_when_unchanged(tmp_path, monkeypatch
 def test_edit_config_backs_up_and_writes_when_changed(tmp_path, monkeypatch):
     config_file = tmp_path / "config.ini"
     args = argparse.Namespace(config_file=config_file)
+    _write_api_config(config_file, suffix="_existing")
 
     parser = ConfigParser()
     parser["api"] = {
@@ -374,6 +377,7 @@ def test_edit_config_backs_up_and_writes_when_changed(tmp_path, monkeypatch):
 def test_edit_config_can_persist_log_dir_without_api_changes(tmp_path, monkeypatch):
     config_file = tmp_path / "config.ini"
     args = argparse.Namespace(config_file=config_file, set_log_dir="/tmp/new-logs")
+    _write_api_config(config_file, suffix="_existing")
 
     parser = ConfigParser()
     parser["api"] = {
@@ -419,6 +423,138 @@ def test_edit_config_can_persist_log_dir_without_api_changes(tmp_path, monkeypat
         config_file,
     )
     assert captured["kwargs"] == {"log_dir": "/tmp/new-logs"}
+
+
+def test_edit_config_no_file_with_all_cli_values_writes_non_interactively(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(
+        config_file=config_file,
+        set_log_dir=None,
+        tmdb_api_key="tmdb_cli",
+        open_subtitles_api_key="os_key_cli",
+        open_subtitles_user_agent="os_agent_cli",
+        open_subtitles_username="os_user_cli",
+        open_subtitles_password="os_pass_cli",
+    )
+
+    monkeypatch.setattr(
+        config_module.Confirm,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Confirm.ask should not be called")),
+    )
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    parsed = read_config(config_file)
+
+    assert parsed is not None
+    assert parsed.get("api", "tmdb_api_key") == "tmdb_cli"
+    assert parsed.get("api", "open_subtitles_password") == "os_pass_cli"
+
+
+def test_edit_config_no_file_missing_values_invokes_interactive_with_cli_defaults(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(
+        config_file=config_file,
+        set_log_dir=None,
+        tmdb_api_key="tmdb_cli",
+        open_subtitles_api_key=None,
+        open_subtitles_user_agent=None,
+        open_subtitles_username=None,
+        open_subtitles_password=None,
+    )
+
+    confirm_calls = {"count": 0}
+
+    def fake_confirm(*_, **__):
+        confirm_calls["count"] += 1
+        return True
+
+    monkeypatch.setattr(config_module.Confirm, "ask", fake_confirm)
+    prompted_values = iter(["os_user_prompted", "os_pass_prompted", "os_agent_prompted", "os_key_prompted"])
+    monkeypatch.setattr(config_module.Prompt, "ask", lambda *_, **__: next(prompted_values))
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    parsed = read_config(config_file)
+
+    assert confirm_calls["count"] == 1
+    assert parsed is not None
+    assert parsed.get("api", "tmdb_api_key") == "tmdb_cli"
+    assert parsed.get("api", "open_subtitles_username") == "os_user_prompted"
+
+
+def test_edit_config_existing_file_without_cli_edits_invokes_interactive(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    _write_api_config(config_file, suffix="_existing")
+    args = argparse.Namespace(
+        config_file=config_file,
+        set_log_dir=None,
+        tmdb_api_key=None,
+        open_subtitles_api_key=None,
+        open_subtitles_user_agent=None,
+        open_subtitles_username=None,
+        open_subtitles_password=None,
+    )
+
+    confirm_calls = {"count": 0}
+    monkeypatch.setattr(
+        config_module.Confirm,
+        "ask",
+        lambda *_, **__: confirm_calls.__setitem__("count", confirm_calls["count"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+    monkeypatch.setattr(
+        config_module,
+        "backup_config_file",
+        lambda *_: (_ for _ in ()).throw(AssertionError("backup_config_file should not be called for no-op")),
+    )
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    assert confirm_calls["count"] == len(API_CONFIG_KEYS)
+
+
+def test_edit_config_existing_file_with_cli_edits_applies_targeted_update(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    _write_api_config(config_file, suffix="_existing")
+    args = argparse.Namespace(
+        config_file=config_file,
+        set_log_dir=None,
+        tmdb_api_key="tmdb_changed",
+        open_subtitles_api_key=None,
+        open_subtitles_user_agent=None,
+        open_subtitles_username=None,
+        open_subtitles_password=None,
+    )
+
+    monkeypatch.setattr(
+        config_module.Confirm,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Confirm.ask should not be called")),
+    )
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+    parsed = read_config(config_file)
+
+    assert parsed is not None
+    assert parsed.get("api", "tmdb_api_key") == "tmdb_changed"
+    assert parsed.get("api", "open_subtitles_api_key") == "os_key_existing"
 
 
 def test_edit_config_prompts_for_missing_values(tmp_path, monkeypatch):

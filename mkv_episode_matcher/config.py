@@ -37,7 +37,7 @@ class Configuration:
     stored: ConfigParser
 
     def has_required_settings(self):
-        required = [self.stored.get("api", k) for k in API_CONFIG_KEYS]
+        required = [self.stored.get("api", k, fallback="") for k in API_CONFIG_KEYS]
         return all(required)
 
 def get_config(args):
@@ -70,12 +70,22 @@ def _get_config(file, args):
     return Configuration(args, config)
 
 def edit_config(config):
-    """Prompt user for all required config values, showing existing as defaults."""
+    """Edit config values using interactive or targeted CLI update behavior."""
     config_file = get_config_file(config.args)
-    config = _get_config(config_file, config.args)
+    merged_config = _get_config(config_file, config.args)
+    persisted_config = read_config(config_file) or ConfigParser(interpolation=None)
+    config_exists = Path(config_file).exists()
+
+    cli_api_overrides = {
+        k: getattr(config.args, k, None)
+        for k in API_CONFIG_KEYS
+        if getattr(config.args, k, None) is not None
+    }
+    set_log_dir = getattr(config.args, "set_log_dir", None)
+    has_cli_edits = bool(cli_api_overrides) or set_log_dir is not None
 
     def ask_with_default(prompt_text, key, description, secret=False):
-        current = config.stored.get("api", key, fallback=None)
+        current = merged_config.stored.get("api", key, fallback=None)
         if current:
             console.print(f"[cyan]{prompt_text}:[/cyan] {description}")
             console.print(f"Current value: [green]{mask_api_key(current) if secret else current}[/green]")
@@ -83,25 +93,37 @@ def edit_config(config):
                 return current
         return Prompt.ask(f"Enter your {key}", default=current or "")
 
-    tmdb_api_key = ask_with_default("TMDb API key", "tmdb_api_key", "Used to lookup show and episode information. To get your API key, create an account at https://www.themoviedb.org/ and follow the instructions at https://developer.themoviedb.org/docs/getting-started", secret=True)
-    open_subtitles_username = ask_with_default("OpenSubtitles Username", "open_subtitles_username", "Account username for OpenSubtitles. To create an account, visit https://www.opensubtitles.com/ then click 'Register'")
-    open_subtitles_password = ask_with_default("OpenSubtitles Password", "open_subtitles_password", "Account password for OpenSubtitles", secret=True)
-    open_subtitles_user_agent = ask_with_default("OpenSubtitles Consumer Name", "open_subtitles_user_agent", "Required for subtitle downloads. Go to https://www.opensubtitles.com/en/consumers, click 'New Consumer', give it a name, then click 'Save'")
-    open_subtitles_api_key = ask_with_default("OpenSubtitles API key", "open_subtitles_api_key", "Required for subtitle downloads. Enter the API key linked with the OpenSubtitles Consumer that you created in the previous step.", secret=True)
-    set_log_dir = getattr(config.args, "set_log_dir", None)
+    should_prompt_interactively = (
+        (not config_exists and not merged_config.has_required_settings())
+        or (config_exists and not has_cli_edits)
+    )
 
-    new_api_config = {
-        "tmdb_api_key": str(tmdb_api_key),
-        "open_subtitles_api_key": str(open_subtitles_api_key),
-        "open_subtitles_user_agent": str(open_subtitles_user_agent),
-        "open_subtitles_username": str(open_subtitles_username),
-        "open_subtitles_password": str(open_subtitles_password),
-    }
+    if should_prompt_interactively:
+        tmdb_api_key = ask_with_default("TMDb API key", "tmdb_api_key", "Used to lookup show and episode information. To get your API key, create an account at https://www.themoviedb.org/ and follow the instructions at https://developer.themoviedb.org/docs/getting-started", secret=True)
+        open_subtitles_username = ask_with_default("OpenSubtitles Username", "open_subtitles_username", "Account username for OpenSubtitles. To create an account, visit https://www.opensubtitles.com/ then click 'Register'")
+        open_subtitles_password = ask_with_default("OpenSubtitles Password", "open_subtitles_password", "Account password for OpenSubtitles", secret=True)
+        open_subtitles_user_agent = ask_with_default("OpenSubtitles Consumer Name", "open_subtitles_user_agent", "Required for subtitle downloads. Go to https://www.opensubtitles.com/en/consumers, click 'New Consumer', give it a name, then click 'Save'")
+        open_subtitles_api_key = ask_with_default("OpenSubtitles API key", "open_subtitles_api_key", "Required for subtitle downloads. Enter the API key linked with the OpenSubtitles Consumer that you created in the previous step.", secret=True)
+
+        new_api_config = {
+            "tmdb_api_key": str(tmdb_api_key),
+            "open_subtitles_api_key": str(open_subtitles_api_key),
+            "open_subtitles_user_agent": str(open_subtitles_user_agent),
+            "open_subtitles_username": str(open_subtitles_username),
+            "open_subtitles_password": str(open_subtitles_password),
+        }
+    else:
+        # Non-interactive path for targeted edits, or first-time setup when all values are provided.
+        new_api_config = {
+            k: str(merged_config.stored.get("api", k, fallback=""))
+            for k in API_CONFIG_KEYS
+        }
+
     current_api_config = {
-        k: config.stored.get("api", k, fallback="")
+        k: persisted_config.get("api", k, fallback="")
         for k in new_api_config
     }
-    current_log_dir = config.stored.get("logging", "log_dir", fallback=None)
+    current_log_dir = persisted_config.get("logging", "log_dir", fallback=None)
     log_dir_changed = set_log_dir is not None and set_log_dir != current_log_dir
 
     if new_api_config == current_api_config and not log_dir_changed:
@@ -123,11 +145,11 @@ def edit_config(config):
         store_kwargs["log_dir"] = set_log_dir
 
     store_api_config(
-        tmdb_api_key,
-        open_subtitles_api_key,
-        open_subtitles_user_agent,
-        open_subtitles_username,
-        open_subtitles_password,
+        new_api_config["tmdb_api_key"],
+        new_api_config["open_subtitles_api_key"],
+        new_api_config["open_subtitles_user_agent"],
+        new_api_config["open_subtitles_username"],
+        new_api_config["open_subtitles_password"],
         config_file,
         **store_kwargs,
     )
