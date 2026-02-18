@@ -88,6 +88,7 @@ def edit_config(config):
     open_subtitles_password = ask_with_default("OpenSubtitles Password", "open_subtitles_password", "Account password for OpenSubtitles", secret=True)
     open_subtitles_user_agent = ask_with_default("OpenSubtitles Consumer Name", "open_subtitles_user_agent", "Required for subtitle downloads. Go to https://www.opensubtitles.com/en/consumers, click 'New Consumer', give it a name, then click 'Save'")
     open_subtitles_api_key = ask_with_default("OpenSubtitles API key", "open_subtitles_api_key", "Required for subtitle downloads. Enter the API key linked with the OpenSubtitles Consumer that you created in the previous step.", secret=True)
+    set_log_dir = getattr(config.args, "set_log_dir", None)
 
     new_api_config = {
         "tmdb_api_key": str(tmdb_api_key),
@@ -100,7 +101,10 @@ def edit_config(config):
         k: config.stored.get("api", k, fallback="")
         for k in new_api_config
     }
-    if new_api_config == current_api_config:
+    current_log_dir = config.stored.get("logging", "log_dir", fallback=None)
+    log_dir_changed = set_log_dir is not None and set_log_dir != current_log_dir
+
+    if new_api_config == current_api_config and not log_dir_changed:
         logger.info("No configuration changes detected; skipping backup and write")
         console.print("[yellow]No configuration changes detected.[/yellow]")
         return
@@ -114,6 +118,10 @@ def edit_config(config):
         logger.error(f"Failed to backup config before write: {e}")
         return
 
+    store_kwargs = {}
+    if set_log_dir is not None:
+        store_kwargs["log_dir"] = set_log_dir
+
     store_api_config(
         tmdb_api_key,
         open_subtitles_api_key,
@@ -121,6 +129,7 @@ def edit_config(config):
         open_subtitles_username,
         open_subtitles_password,
         config_file,
+        **store_kwargs,
     )
     console.print("[bold green]Configuration saved.[/bold green]")
 
@@ -183,6 +192,7 @@ def store_api_config(
     open_subtitles_username,
     open_subtitles_password,
     file,
+    log_dir=None,
 ):
     """
     Sets the configuration values and writes them to a file.
@@ -206,6 +216,8 @@ def store_api_config(
         "open_subtitles_username": str(open_subtitles_username),
         "open_subtitles_password": str(open_subtitles_password),
     }
+    if log_dir is not None:
+        config["logging"] = {"log_dir": str(log_dir)}
     logger.info(
         f"Setting config with to {config}"
     )

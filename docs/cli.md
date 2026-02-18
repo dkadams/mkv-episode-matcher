@@ -29,6 +29,7 @@ mkv-episode-matcher onboard
 Options:
 
 - `--config`, `-c`: Path to `config.ini` (default: `~/.mkv-episode-matcher/config.ini`)
+- `--set-log-dir`: Persist logs directory in `config.ini` under `[logging].log_dir`
 - `--tmdb-api-key`
 - `--open_subtitles_api_key`
 - `--open_subtitles_user_agent`

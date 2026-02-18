@@ -57,6 +57,26 @@ def test_store_api_config_preserves_existing_logging_section(tmp_path):
     assert parsed.get("api", "tmdb_api_key") == "tmdb"
 
 
+def test_store_api_config_sets_logging_when_log_dir_provided(tmp_path):
+    config_file = tmp_path / "config.ini"
+    _write_api_config(config_file)
+
+    store_api_config(
+        "tmdb_new",
+        "os_key_new",
+        "os_agent_new",
+        "os_user_new",
+        "os_pass_new",
+        config_file,
+        log_dir="/tmp/persisted-logs",
+    )
+
+    parsed = read_config(config_file)
+    assert parsed is not None
+    assert parsed.get("logging", "log_dir") == "/tmp/persisted-logs"
+    assert parsed.get("api", "tmdb_api_key") == "tmdb_new"
+
+
 def test_get_config_file_uses_arg_when_present(tmp_path):
     custom = tmp_path / "custom.ini"
     args = argparse.Namespace(config_file=custom)
@@ -331,8 +351,9 @@ def test_edit_config_backs_up_and_writes_when_changed(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_store(*store_args):
+    def fake_store(*store_args, **store_kwargs):
         captured["args"] = store_args
+        captured["kwargs"] = store_kwargs
 
     monkeypatch.setattr(config_module, "store_api_config", fake_store)
 
@@ -347,6 +368,57 @@ def test_edit_config_backs_up_and_writes_when_changed(tmp_path, monkeypatch):
         "os_pass_changed",
         config_file,
     )
+    assert captured["kwargs"] == {}
+
+
+def test_edit_config_can_persist_log_dir_without_api_changes(tmp_path, monkeypatch):
+    config_file = tmp_path / "config.ini"
+    args = argparse.Namespace(config_file=config_file, set_log_dir="/tmp/new-logs")
+
+    parser = ConfigParser()
+    parser["api"] = {
+        "tmdb_api_key": "tmdb_existing",
+        "open_subtitles_api_key": "os_key_existing",
+        "open_subtitles_user_agent": "os_agent_existing",
+        "open_subtitles_username": "os_user_existing",
+        "open_subtitles_password": "os_pass_existing",
+    }
+    parser["logging"] = {"log_dir": "/tmp/old-logs"}
+    existing = Configuration(args=args, stored=parser)
+
+    monkeypatch.setattr(config_module, "_get_config", lambda *_: existing)
+    monkeypatch.setattr(config_module.Confirm, "ask", lambda *_, **__: True)
+    monkeypatch.setattr(
+        config_module.Prompt,
+        "ask",
+        lambda *_, **__: (_ for _ in ()).throw(AssertionError("Prompt.ask should not be called")),
+    )
+    monkeypatch.setattr(config_module.console, "print", lambda *_, **__: None)
+    monkeypatch.setattr(
+        config_module,
+        "backup_config_file",
+        lambda path: path.parent / "config.ini.bak.20260101T000000",
+    )
+
+    captured = {}
+
+    def fake_store(*store_args, **store_kwargs):
+        captured["args"] = store_args
+        captured["kwargs"] = store_kwargs
+
+    monkeypatch.setattr(config_module, "store_api_config", fake_store)
+
+    config_module.edit_config(Configuration(args=args, stored=ConfigParser()))
+
+    assert captured["args"] == (
+        "tmdb_existing",
+        "os_key_existing",
+        "os_agent_existing",
+        "os_user_existing",
+        "os_pass_existing",
+        config_file,
+    )
+    assert captured["kwargs"] == {"log_dir": "/tmp/new-logs"}
 
 
 def test_edit_config_prompts_for_missing_values(tmp_path, monkeypatch):

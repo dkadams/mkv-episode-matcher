@@ -340,6 +340,11 @@ def get_config_parser() -> argparse.ArgumentParser:
                                help="OpenSubtitles Username")
     config_parser.add_argument("--open_subtitles_password",
                                help="OpenSubtitles Password")
+    config_parser.add_argument(
+        "--set-log-dir",
+        dest="set_log_dir",
+        help="Persist log directory in config.ini under [logging].log_dir",
+    )
 
     return config_parser
 
