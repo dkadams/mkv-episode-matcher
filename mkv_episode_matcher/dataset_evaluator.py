@@ -9,6 +9,7 @@ from typing import Iterable
 import numpy as np
 import pysubs2
 from rich.console import Console
+from rich.progress import Progress
 from rich.table import Table
 
 from mkv_episode_matcher.config import Configuration
@@ -45,20 +46,31 @@ def evaluate_dataset(config: Configuration):
     if not top_ks:
         raise ValueError("At least one positive --top-k value is required")
 
-    segments = list(_load_segments(segments_path, limit=config.args.limit))
+    with Progress() as progress:
+        load_task = progress.add_task("Loading dataset segments", total=None)
+        segments = list(_load_segments(segments_path, limit=config.args.limit))
+        progress.update(load_task, total=len(segments), completed=len(segments))
+
     if not segments:
         console.print("[orange1]No segments to evaluate.")
         return
 
     model = SentenceTransformerModel()
-    subtitle_vectors = _build_subtitle_vectors(subtitles_dir, interval_seconds, model)
-    report = _score_segments(
-        segments=segments,
-        subtitle_vectors=subtitle_vectors,
-        model=model,
-        top_ks=top_ks,
-        max_failures=config.args.show_failures,
-    )
+    with Progress() as progress:
+        subtitle_vectors = _build_subtitle_vectors(
+            subtitles_dir,
+            interval_seconds,
+            model,
+            progress=progress,
+        )
+        report = _score_segments(
+            segments=segments,
+            subtitle_vectors=subtitle_vectors,
+            model=model,
+            top_ks=top_ks,
+            max_failures=config.args.show_failures,
+            progress=progress,
+        )
 
     report.update({
         "dataset_dir": str(dataset_dir),
@@ -112,18 +124,27 @@ def _load_segments(segments_path: Path, limit: int | None) -> Iterable[SegmentRe
 
 
 def _build_subtitle_vectors(subtitles_dir: Path, interval_seconds: int,
-    model: SentenceTransformerModel) -> dict[int, tuple[list[EpisodeKey], np.ndarray]]:
+    model: SentenceTransformerModel,
+    progress: Progress | None = None) -> dict[int, tuple[list[EpisodeKey], np.ndarray]]:
     vectors_by_interval: dict[int, list[tuple[EpisodeKey, np.ndarray]]] = {}
+    srt_paths = sorted(subtitles_dir.rglob("*.srt"))
+    build_task = None
+    if progress:
+        build_task = progress.add_task("Embedding subtitle intervals", total=len(srt_paths))
 
-    for srt_path in sorted(subtitles_dir.rglob("*.srt")):
+    for srt_path in srt_paths:
         episode = EpisodeKey.from_srt_path(srt_path)
         if not episode:
+            if progress and build_task is not None:
+                progress.update(build_task, advance=1)
             continue
         for interval_index, interval_text in _interval_texts(srt_path, interval_seconds):
             embedding = model.encode_document(interval_text)
             vectors_by_interval.setdefault(interval_index, []).append(
                 (episode, embedding)
             )
+        if progress and build_task is not None:
+            progress.update(build_task, advance=1)
 
     reduced: dict[int, tuple[list[EpisodeKey], np.ndarray]] = {}
     for interval_index, episode_vectors in vectors_by_interval.items():
@@ -152,17 +173,24 @@ def _interval_texts(srt_path: Path, interval_seconds: int) -> Iterable[tuple[int
 
 def _score_segments(segments: list[SegmentRecord],
     subtitle_vectors: dict[int, tuple[list[EpisodeKey], np.ndarray]],
-    model: SentenceTransformerModel, top_ks: list[int], max_failures: int) -> dict:
+    model: SentenceTransformerModel, top_ks: list[int], max_failures: int,
+    progress: Progress | None = None) -> dict:
     top_hits = {k: 0 for k in top_ks}
     reciprocal_rank_sum = 0.0
     evaluated = 0
     missing_interval = 0
     failures = []
 
+    score_task = None
+    if progress:
+        score_task = progress.add_task("Scoring transcript segments", total=len(segments))
+
     for segment in segments:
         interval_data = subtitle_vectors.get(segment.segment_index)
         if not interval_data:
             missing_interval += 1
+            if progress and score_task is not None:
+                progress.update(score_task, advance=1)
             continue
 
         episodes, matrix = interval_data
@@ -185,6 +213,8 @@ def _score_segments(segments: list[SegmentRecord],
                 "expected": [str(ep) for ep in sorted(segment.expected)],
                 "top_predictions": [str(ep) for ep in ranked[:max(top_ks)]],
             })
+        if progress and score_task is not None:
+            progress.update(score_task, advance=1)
 
     top_accuracy = {
         f"top_{k}": (top_hits[k] / evaluated if evaluated else 0.0)
