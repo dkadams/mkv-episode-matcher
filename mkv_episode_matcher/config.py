@@ -57,7 +57,7 @@ def _get_config(file, args):
     args_dict = vars(args)
     # Only override expected keys
     api_args_override = {k: v for k in API_CONFIG_KEYS
-                         if (v := args_dict.get(k.replace("_", "-"), None))}
+                         if (v := args_dict.get(k, None))}
     args_override = {
         "api": api_args_override
     }
@@ -163,4 +163,3 @@ def read_config(file):
 
     parser.read(file, encoding="utf-8")
     return parser
-
