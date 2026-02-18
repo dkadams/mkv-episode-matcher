@@ -34,7 +34,37 @@ class EpisodeKey(tuple[int, int]):
         return _episode_str(self.season_number, self.episode_number)
 
     @staticmethod
-    def from_path(file: Path) -> Optional["EpisodeKey"]:
+    def _guessit_episode_parts(file: Path) -> list[tuple[int, int]]:
+        matches = guessit(file.name)
+        if not matches:
+            return []
+
+        season_number = matches.get("season")
+        episode_number = matches.get("episode")
+        if not season_number or not episode_number:
+            return []
+
+        if isinstance(episode_number, (list, tuple)):
+            expanded = []
+            for entry in episode_number:
+                if isinstance(entry, (list, tuple)):
+                    expanded.extend(
+                        (season_number, ep) for ep in entry
+                    )
+                else:
+                    expanded.append((season_number, entry))
+            return expanded
+
+        return [(season_number, episode_number)]
+
+    @staticmethod
+    def from_srt_path(file: Path) -> Optional["EpisodeKey"]:
+        """
+        Resolve an EpisodeKey from an .srt path.
+
+        This should return zero or one EpisodeKey. If multiple episode numbers
+        are detected, an error is raised.
+        """
         def from_opensubs() -> Optional["EpisodeKey"]:
             """
             subtitle_downloader.py saves off a JSON file with API response data
@@ -56,28 +86,33 @@ class EpisodeKey(tuple[int, int]):
             else:
                 return None
 
-        def from_guessit() -> Optional["EpisodeKey"]:
-            matches = guessit(file.name)
-            if not matches:
+        def from_guessit_single() -> Optional["EpisodeKey"]:
+            parts = EpisodeKey._guessit_episode_parts(file)
+            if not parts:
                 return None
+            if len(parts) > 1:
+                raise ValueError(
+                    f"Expected single episode for subtitle file, got multiple: {file}"
+                )
+            season_number, episode_number = parts[0]
+            return EpisodeKey(season_number, episode_number)
 
-            season_number = matches.get("season")
-            episode_number = matches.get("episode")
-            if season_number and episode_number:
-                return EpisodeKey(season_number, episode_number)
-            else:
-                return None
-
-        return from_opensubs() or from_guessit()
+        return from_opensubs() or from_guessit_single()
 
     @staticmethod
-    def from_str(episode: str) -> "EpisodeKey":
-        parts = episode.split('S')[1].split('E')
+    def from_vid_path(file: Path) -> list["EpisodeKey"]:
+        """
+        Resolve EpisodeKeys from a video path.
 
-        season_number = int(parts[0])
-        episode_number = int(parts[1])
+        Returns zero or more EpisodeKeys. This does not consult OpenSubtitles
+        metadata.
+        """
+        parts = EpisodeKey._guessit_episode_parts(file)
+        if not parts:
+            return []
 
-        return EpisodeKey(season_number, episode_number)
+        return [EpisodeKey(season, episode) for season, episode in parts]
+
 
 def get_specs(config):
     # Normalize filtering to a list of episode specifiers

@@ -127,13 +127,15 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
         logger.info(f"Intervalizing subs for: {self.series.name}")
 
         existing_srts = self.interval_subs_dir.rglob("*.srt")
-        existing_keys = set(EpisodeKey.from_path(file)
-                            for file in existing_srts)
+        existing_keys = {
+            key for file in existing_srts
+            if (key := EpisodeKey.from_srt_path(file))
+        }
         missing_subs = episode_keys - existing_keys
 
         srt_files = list(self.series.subtitles_dir.rglob("*.srt"))
         eps_and_subs_to_process = [(key, file) for file in srt_files
-                                   if (key := EpisodeKey.from_path(file)) in missing_subs]
+                                   if (key := EpisodeKey.from_srt_path(file)) in missing_subs]
         if not eps_and_subs_to_process:
           logger.info(f"No subs to intervalize for series: {self.series.name}")
           return
@@ -173,7 +175,7 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
 
         interval_subs = [(episode_key, path)
                          for path in self.interval_subs_dir.rglob("*.srt")
-                         if (episode_key := EpisodeKey.from_path(path)) in episode_keys]
+                         if (episode_key := EpisodeKey.from_srt_path(path)) in episode_keys]
         logger.info(f"Extracting embeddings for subs: {interval_subs}")
 
         def extract_embeddings(interval_index: int):

@@ -46,7 +46,7 @@ class Video:
     video_info: VideoInfo
     transcription: Optional[Path]
     embeddings: Optional[Path]
-    known_episode: Optional[EpisodeKey]
+    known_episodes: set[EpisodeKey]
 
 @dataclass(frozen=True, eq=True, order=True)
 class IntervalMatch:
@@ -91,7 +91,7 @@ class IndexedEpisodeMatcher:
         videos = [Video(file, video_info_by_path[file],
                         transcription := transcriptions[file],
                         embeddings[transcription],
-                        EpisodeKey.from_path(file))
+                        set(EpisodeKey.from_vid_path(file)))
                   for file in video_files]
 
         # Update references from embeddings path to video
@@ -346,4 +346,3 @@ def chunked(iterable: Iterable, n: int) -> Iterable:
     it = iter(iterable)
     while chunk := list(islice(it, n)):
         yield chunk
-

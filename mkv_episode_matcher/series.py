@@ -90,8 +90,12 @@ class Series:
         else:
             settings = SERIES_DEFAULT_SETTINGS.copy()
 
-        segment_duration = settings.get("segment_duration")
-        random_seed = settings.get("random_seed")
+        segment_duration = settings.get(
+            "segment_duration", SERIES_DEFAULT_SETTINGS["segment_duration"]
+        )
+        random_seed = settings.get(
+            "random_seed", SERIES_DEFAULT_SETTINGS["random_seed"]
+        )
 
         return Series(series_dir, series_detail, series_name,
                       segment_duration, random_seed)

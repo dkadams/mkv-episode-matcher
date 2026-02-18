@@ -151,13 +151,13 @@ def display_results_by_video(series: Series,
 
     correct = 0
     known_episode_count = 0
-    for video, agg_match in matches_by_video:
-        known_episode = video.video_info.known_episode
-        if known_episode:
+    for video, matches in matches_by_video.items():
+        known_episodes = video.known_episodes
+        if known_episodes:
             known_episode_count += 1
-            actual = str(known_episode)
-            correct_match = (len(agg_match.matches) > 0
-                             and known_episode == agg_match.episode)
+            actual = ", ".join(str(ep) for ep in sorted(known_episodes))
+            best_match = matches[0] if matches else None
+            correct_match = bool(best_match and best_match.episode in known_episodes)
             if correct_match:
                 correct += 1
         else:
@@ -165,13 +165,12 @@ def display_results_by_video(series: Series,
             actual = "-"
 
         def prefix(match: IntervalMatch):
-            if match.episode == known_episode:
+            if match.episode in known_episodes:
                 return "[bold green]"
-            else:
-                return ""
+            return ""
 
         formatted_matches = [prefix(m) + str(m.episode) + "\n" + str(m.score)
-                             for m in agg_match.matches]
+                             for m in matches]
 
         if len(formatted_matches) < 5:
             formatted_matches.extend(["-"] * (5 - len(formatted_matches)))
@@ -183,10 +182,10 @@ def display_results_by_video(series: Series,
             case False:
                 correct_marker = "[bold red]X"
 
-        table.add_row(str(agg_match.file),
+        table.add_row(str(video.file),
                       actual,
                       correct_marker,
-                      str(len(agg_match.matches)),
+                      str(len(matches)),
                       formatted_matches[0],
                       formatted_matches[1],
                       formatted_matches[2],

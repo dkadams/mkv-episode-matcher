@@ -4,6 +4,7 @@ from mkv_episode_matcher import __version__
 from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndex
 from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
+from mkv_episode_matcher.dataset_collector import collect_dataset
 from mkv_episode_matcher.episode_matcher import match_episodes
 from mkv_episode_matcher.episodes_specifier import EpisodesSpecifierAction
 from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
@@ -33,6 +34,13 @@ def build_args_parser():
     add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
 
     add_index_subs(
+        subparsers,
+        config_parser,
+        series_dir_parser,
+        episode_parser,
+        index_parser,
+    )
+    add_collect_dataset(
         subparsers,
         config_parser,
         series_dir_parser,
@@ -134,6 +142,63 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
                                    action="store_true",
                                    help="Rebuild the index from scratch")
     index_subs_parser.set_defaults(func=index_subtitles)
+
+def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_parser,
+    index_parser):
+    collect_parser = subparsers.add_parser(
+        "collect-dataset",
+        parents=[config_parser, series_dir_parser, episode_parser, index_parser],
+        help="Collect labeled transcription segments and subtitles for evaluation",
+    )
+
+    collect_parser.add_argument(
+        "--output-dir",
+        required=True,
+        help="Output directory to write the collected dataset",
+    )
+
+    collect_parser.add_argument(
+        "--segment-duration",
+        type=int,
+        default=None,
+        help="Override the segment duration for this collection run",
+    )
+
+    collect_parser.add_argument(
+        "--segments-per-minute",
+        type=float,
+        default=.5,
+        help="Number of segments to extract per minute (default: .5)",
+    )
+
+    collect_parser.add_argument(
+        "--no-transcription-cache",
+        action="store_true",
+        help="Don't read or create transcribed text cache",
+    )
+
+    xscriber_group = collect_parser.add_mutually_exclusive_group()
+    xscriber_group.add_argument(
+        "--whisper", dest="transcriber",
+        action="store_const", const=WhisperTranscriber,
+        help="Use Whisper for transcription.")
+    xscriber_group.add_argument(
+        "--faster-whisper", dest="transcriber",
+        action="store_const", const=FasterWhisperTranscriber,
+        help="Use Faster Whisper for transcription.")
+    xscriber_group.add_argument(
+        "--whispercpp-cli", dest="transcriber",
+        action="store_const", const=WhispercppCliTranscriber,
+        help="Use whisper.cpp's CLI for transcription.")
+    xscriber_group.add_argument(
+        "--whisperkit-cli", dest="transcriber",
+        action="store_const", const=WhisperKitCliTranscriber,
+        help="Use WhisperKit's CLI for transcription.")
+
+    collect_parser.set_defaults(
+        func=collect_dataset,
+        transcriber=WhispercppCliTranscriber,
+    )
 
 
 def add_match(subparsers, config_parser, index_parser):
