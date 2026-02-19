@@ -12,11 +12,16 @@ from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
 from mkv_episode_matcher.subtitle_index import index_subtitles
+from mkv_episode_matcher.transcriber_benchmark import (
+    BENCHMARK_BACKEND_CHOICES,
+    benchmark_transcribers,
+)
 from mkv_episode_matcher.transcribers import (
     WhisperTranscriber,
     FasterWhisperTranscriber,
     WhispercppCliTranscriber,
     WhisperKitCliTranscriber,
+    ParakeetMlxCliTranscriber,
 )
 
 def build_args_parser():
@@ -50,6 +55,7 @@ def build_args_parser():
     )
     add_evaluate_dataset(subparsers, config_parser)
     add_match(subparsers, config_parser, index_parser)
+    add_benchmark_transcribers(subparsers, config_parser)
 
     # fetch/match/rename
     parser.add_argument(
@@ -205,6 +211,10 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
         "--whisperkit-cli", dest="transcriber",
         action="store_const", const=WhisperKitCliTranscriber,
         help="Use WhisperKit's CLI for transcription.")
+    xscriber_group.add_argument(
+        "--parakeet-mlx", dest="transcriber",
+        action="store_const", const=ParakeetMlxCliTranscriber,
+        help="Use parakeet-mlx for transcription.")
 
     collect_parser.set_defaults(
         func=collect_dataset,
@@ -308,11 +318,72 @@ def add_match(subparsers, config_parser, index_parser):
         "--whisperkit-cli", dest="transcriber",
         action="store_const", const=WhisperKitCliTranscriber,
         help="Use WhisperKit's CLI for transcription.")
+    xscriber_group.add_argument(
+        "--parakeet-mlx", dest="transcriber",
+        action="store_const", const=ParakeetMlxCliTranscriber,
+        help="Use parakeet-mlx for transcription.")
 
 
     match_parser.set_defaults(func=match_episodes,
                               transcriber=WhispercppCliTranscriber,
                               display_by_episode=True,)
+
+
+def add_benchmark_transcribers(subparsers, config_parser):
+    parser = subparsers.add_parser(
+        "benchmark-transcribers",
+        parents=[config_parser],
+        help="Benchmark transcription backends against one or more input paths",
+    )
+    parser.add_argument(
+        "video_files",
+        nargs="+",
+        help="Path to one or more video files, or directories to recursively search",
+    )
+    parser.add_argument(
+        "--extension",
+        "-e",
+        nargs="+",
+        default=[".mkv"],
+        help="File extension(s) to include when scanning directories (default: .mkv)",
+    )
+    parser.add_argument(
+        "--segments-per-minute",
+        type=float,
+        default=.5,
+        help="Number of segments to extract per minute (default: .5)",
+    )
+    parser.add_argument(
+        "--segment-duration",
+        type=int,
+        default=None,
+        help="Override segment duration in seconds (default: series setting or 30)",
+    )
+    parser.add_argument(
+        "--random-seed",
+        type=int,
+        default=None,
+        help="Override random seed (default: series setting or 12345)",
+    )
+    parser.add_argument(
+        "--thread-workers",
+        type=int,
+        default=10,
+        help="Thread worker count for subprocess backends (default: 10)",
+    )
+    parser.add_argument(
+        "--process-workers",
+        type=int,
+        default=8,
+        help="Process worker count for Python model backends (default: 8)",
+    )
+    parser.add_argument(
+        "--backend",
+        action="append",
+        choices=BENCHMARK_BACKEND_CHOICES,
+        help="Backend(s) to benchmark (repeatable). Default: all backends.",
+    )
+    parser.set_defaults(func=benchmark_transcribers)
 
 def get_series_dir_parser() -> argparse.ArgumentParser:
     series_dir_parser = argparse.ArgumentParser(add_help=False)

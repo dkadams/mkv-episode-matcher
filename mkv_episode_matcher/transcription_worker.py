@@ -12,9 +12,10 @@ def _init_transcription_worker(config: Configuration, series: Series,
     """Initializer for the process pool so Whisper loads only in child processes."""
     global _PROCESS_TEXT_EXTRACTOR
 
-    if _PROCESS_TEXT_EXTRACTOR is None:
-        _PROCESS_TEXT_EXTRACTOR = SegmentTranscriber(config, series,
-                                                     model_name, transcriber)
+    # Always reinitialize when a new executor/pool is created so each benchmark
+    # backend uses its own transcriber implementation.
+    _PROCESS_TEXT_EXTRACTOR = SegmentTranscriber(config, series,
+                                                 model_name, transcriber)
 
 def _extract_text_segments_worker(inputs: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
     """Extract text segments for a single file inside a worker process."""

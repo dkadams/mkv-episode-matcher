@@ -4,16 +4,14 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Protocol, runtime_checkable
 
 import torch
 import whisper
 from faster_whisper import WhisperModel
 from loguru import logger
 
-@runtime_checkable
-class SubprocessTranscriber(Protocol):
-    pass
+class SubprocessTranscriber:
+    """Marker base class for backends that run external CLI executables."""
 
 class WhisperTranscriber:
     def __init__(self, model_name):
@@ -165,3 +163,83 @@ class WhisperKitCliTranscriber(SubprocessTranscriber):
                 return None
 
             return result.stdout.strip()
+
+
+class ParakeetMlxCliTranscriber:
+    """Python adapter for parakeet-mlx."""
+
+    DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+
+    def __init__(self, model_name: str | None):
+        self.model_name = self._resolve_model_name(model_name)
+        self.chunk_duration = float(os.environ.get("PARAKEET_CHUNK_DURATION", "120"))
+        self.overlap_duration = float(os.environ.get("PARAKEET_OVERLAP_DURATION", "15"))
+        self.cache_dir = os.environ.get("PARAKEET_CACHE_DIR")
+        self.fp32 = self._is_truthy(os.environ.get("PARAKEET_FP32"))
+        self.local_attention = self._is_truthy(os.environ.get("PARAKEET_LOCAL_ATTENTION"))
+        self.local_attention_context_size = int(os.environ.get("PARAKEET_LOCAL_ATTENTION_CTX", "256"))
+        self.model = self._load_model(
+            self.model_name,
+            fp32=self.fp32,
+            cache_dir=self.cache_dir,
+            local_attention=self.local_attention,
+            local_attention_context_size=self.local_attention_context_size,
+        )
+
+    @classmethod
+    def _resolve_model_name(cls, model_name: str | None) -> str:
+        if not model_name:
+            return cls.DEFAULT_MODEL
+
+        expanded = Path(model_name).expanduser()
+        if expanded.exists():
+            return str(expanded)
+
+        normalized = str(model_name).strip()
+        # The app default ("small.en") is for Whisper and should not be used here.
+        if "/" in normalized or "parakeet" in normalized.lower():
+            return normalized
+        return cls.DEFAULT_MODEL
+
+    @staticmethod
+    def _is_truthy(value: str | None) -> bool:
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _load_model(
+        model_name: str,
+        *,
+        fp32: bool,
+        cache_dir: str | None,
+        local_attention: bool,
+        local_attention_context_size: int,
+    ):
+        from mlx.core import bfloat16, float32
+        from parakeet_mlx import from_pretrained
+
+        loaded = from_pretrained(
+            model_name,
+            dtype=float32 if fp32 else bfloat16,
+            cache_dir=cache_dir,
+        )
+        if local_attention:
+            loaded.encoder.set_attention_model(
+                "rel_pos_local_attn",
+                (local_attention_context_size, local_attention_context_size),
+            )
+        return loaded
+
+    def transcribe(self, audio_path: Path):
+        logger.info(f"Transcribing {audio_path} with parakeet-mlx (python)")
+        try:
+            result = self.model.transcribe(
+                str(audio_path),
+                chunk_duration=self.chunk_duration if self.chunk_duration > 0 else None,
+                overlap_duration=self.overlap_duration,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"parakeet-mlx failed for {audio_path}: {exc}")
+            return None
+
+        text = getattr(result, "text", None)
+        return str(text).strip() if text else None
