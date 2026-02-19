@@ -1,6 +1,5 @@
 import dataclasses
 import json
-import math
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -31,11 +30,13 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
 
     output_root = _resolve_output_root(config, series, all_series_dirs)
     output_root.mkdir(parents=True, exist_ok=True)
-    subtitles_out = output_root / "subtitles"
+    transcriptions_out = output_root / "transcriptions" / "text"
+    transcriptions_out.mkdir(parents=True, exist_ok=True)
+    subtitles_out = output_root / "subtitles" / "srt"
     subtitles_out.mkdir(parents=True, exist_ok=True)
 
     meta_path = output_root / "meta.json"
-    segments_path = output_root / "segments.jsonl"
+    manifest_path = output_root / "manifest.jsonl"
     exclusions_path = output_root / "exclusions.jsonl"
     exclusions_path.write_text("", encoding="utf-8")
 
@@ -68,13 +69,12 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
     matcher = IndexedEpisodeMatcher(config, series)
     with Progress() as progress:
         info_by_path, transcriptions = matcher.get_transcriptions(progress, filtered_videos)
-
-    segment_indexes = matcher.get_segment_selection(info_by_path.values())
-
-    total_segments = 0
-    kept_segments = 0
-    with segments_path.open("w", encoding="utf-8") as segments_out:
+    total_videos = 0
+    kept_videos = 0
+    copied_transcriptions = 0
+    with manifest_path.open("w", encoding="utf-8") as manifest_out:
         for path in filtered_videos:
+            total_videos += 1
             episode_keys = EpisodeKey.from_vid_path(path)
             if not episode_keys:
                 continue
@@ -97,58 +97,54 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
                 })
                 continue
 
-            with transcript_path.open("r", encoding="utf-8") as transcript_in:
-                transcript = json.load(transcript_in)
+            copied_path = transcriptions_out / transcript_path.name
+            shutil.copy2(transcript_path, copied_path)
+            copied_transcriptions += 1
 
-            target_segments = math.ceil(video_info.minutes * config.args.segments_per_minute)
-            selected = segment_indexes[:target_segments]
-            for segment_index in selected:
-                total_segments += 1
-                text = transcript.get(str(segment_index)) or transcript.get(segment_index)
-                if not text:
-                    _write_exclusion(exclusions_path, {
-                        "video_path": str(path),
-                        "episodes": [str(key) for key in episode_keys],
-                        "segment_index": segment_index,
-                        "reason": "missing_segment_text",
-                    })
-                    continue
+            payload = {
+                "series_name": series.name,
+                "episodes": [str(key) for key in episode_keys],
+                "video_path": str(path),
+                "transcription_path": str(copied_path.relative_to(output_root)),
+                "segment_duration": series.segment_duration,
+                "segments_per_minute": config.args.segments_per_minute,
+                "duration_minutes": video_info.minutes,
+            }
+            if len(episode_keys) == 1:
+                payload["episode"] = str(episode_keys[0])
+            manifest_out.write(json.dumps(payload, ensure_ascii=False))
+            manifest_out.write("\n")
+            kept_videos += 1
 
-                start_sec = segment_index * series.segment_duration
-                end_sec = start_sec + series.segment_duration
-                payload = {
-                    "series_name": series.name,
-                    "episodes": [str(key) for key in episode_keys],
-                    "video_path": str(path),
-                    "segment_index": segment_index,
-                    "start_sec": start_sec,
-                    "end_sec": end_sec,
-                    "segment_duration": series.segment_duration,
-                    "transcript_text": text,
-                }
-                if len(episode_keys) == 1:
-                    payload["episode"] = str(episode_keys[0])
-                segments_out.write(json.dumps(payload, ensure_ascii=False))
-                segments_out.write("\n")
-                kept_segments += 1
-
-    _copy_subtitles(series, subtitles_out, specified_keys, exclusions_path)
+    copied_subtitles = _copy_subtitles(series, subtitles_out, specified_keys, exclusions_path)
 
     with meta_path.open("w", encoding="utf-8") as meta_out:
         json.dump({
+            "schema_version": 2,
+            "dataset_type": "mkv-episode-matcher-eval",
             "series_name": series.name,
-            "series_dir": str(series.dir),
+            "source_series_dir": str(series.dir),
             "segment_duration": series.segment_duration,
             "segments_per_minute": config.args.segments_per_minute,
             "random_seed": series.random_seed,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "segments_total": total_segments,
-            "segments_kept": kept_segments,
+            "paths": {
+                "manifest": "manifest.jsonl",
+                "transcriptions_dir": "transcriptions/text",
+                "subtitles_dir": "subtitles/srt",
+                "exclusions": "exclusions.jsonl",
+            },
+            "counts": {
+                "videos_total": total_videos,
+                "videos_included": kept_videos,
+                "transcriptions_written": copied_transcriptions,
+                "subtitles_copied": copied_subtitles,
+            },
         }, meta_out, ensure_ascii=False, indent=2)
 
     console.print(
         f"[bold green]Dataset written to {output_root}[/bold green]\n"
-        f"Segments: {kept_segments}/{total_segments}"
+        f"Videos: {kept_videos}/{total_videos}"
     )
 
 
@@ -167,6 +163,7 @@ def _copy_subtitles(series, subtitles_out: Path, specified_keys, exclusions_path
         })
         return
 
+    copied = 0
     for srt in series.subtitles_dir.rglob("*.srt"):
         episode_key = EpisodeKey.from_srt_path(srt)
         if not episode_key:
@@ -179,6 +176,8 @@ def _copy_subtitles(series, subtitles_out: Path, specified_keys, exclusions_path
             continue
         dest = subtitles_out / srt.name
         shutil.copy2(srt, dest)
+        copied += 1
+    return copied
 
 
 def _write_exclusion(path: Path, payload: dict):
@@ -186,4 +185,3 @@ def _write_exclusion(path: Path, payload: dict):
     with path.open("a", encoding="utf-8") as out:
         out.write(json.dumps(payload, ensure_ascii=False))
         out.write("\n")
-

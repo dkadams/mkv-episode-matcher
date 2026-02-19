@@ -243,7 +243,7 @@ def add_evaluate_dataset(subparsers, config_parser):
         "--limit",
         type=int,
         default=None,
-        help="Evaluate only the first N dataset segments",
+        help="Evaluate only the first N manifest records (videos)",
     )
     evaluate_parser.add_argument(
         "--show-failures",

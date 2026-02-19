@@ -28,15 +28,24 @@ class SegmentRecord:
     expected: set[EpisodeKey]
     video_path: str
 
+@dataclass(frozen=True)
+class DatasetPaths:
+    manifest: Path
+    subtitles_dir: Path
+    transcriptions_dir: Path
+
 
 def evaluate_dataset(config: Configuration):
     dataset_dir = Path(config.args.dataset_dir).expanduser().resolve()
-    segments_path = dataset_dir / "segments.jsonl"
-    subtitles_dir = dataset_dir / "subtitles"
-    if not segments_path.exists():
-        raise FileNotFoundError(f"Dataset file not found: {segments_path}")
-    if not subtitles_dir.exists():
-        raise FileNotFoundError(f"Subtitles directory not found: {subtitles_dir}")
+    dataset_paths = _resolve_dataset_paths(dataset_dir)
+    if not dataset_paths.manifest.exists():
+        raise FileNotFoundError(f"Dataset manifest not found: {dataset_paths.manifest}")
+    if not dataset_paths.subtitles_dir.exists():
+        raise FileNotFoundError(f"Subtitles directory not found: {dataset_paths.subtitles_dir}")
+    if not dataset_paths.transcriptions_dir.exists():
+        raise FileNotFoundError(
+            f"Transcriptions directory not found: {dataset_paths.transcriptions_dir}"
+        )
 
     interval_seconds = _resolve_segment_duration(
         dataset_dir,
@@ -47,9 +56,14 @@ def evaluate_dataset(config: Configuration):
         raise ValueError("At least one positive --top-k value is required")
 
     with Progress() as progress:
-        load_task = progress.add_task("Loading dataset segments", total=None)
-        segments = list(_load_segments(segments_path, limit=config.args.limit))
-        progress.update(load_task, total=len(segments), completed=len(segments))
+        records = list(_load_manifest(dataset_paths.manifest, limit=config.args.limit))
+        load_task = progress.add_task("Loading transcription segments", total=len(records))
+        segments = _load_segments_from_records(
+            records,
+            dataset_dir=dataset_dir,
+            task_id=load_task,
+            progress=progress,
+        )
 
     if not segments:
         console.print("[orange1]No segments to evaluate.")
@@ -58,7 +72,7 @@ def evaluate_dataset(config: Configuration):
     model = SentenceTransformerModel()
     with Progress() as progress:
         subtitle_vectors = _build_subtitle_vectors(
-            subtitles_dir,
+            dataset_paths.subtitles_dir,
             interval_seconds,
             model,
             progress=progress,
@@ -98,29 +112,76 @@ def _resolve_segment_duration(dataset_dir: Path, override: int | None) -> int:
     return int(meta.get("segment_duration", 30))
 
 
-def _load_segments(segments_path: Path, limit: int | None) -> Iterable[SegmentRecord]:
-    with segments_path.open("r", encoding="utf-8") as segments_in:
-        for idx, line in enumerate(segments_in):
+def _resolve_dataset_paths(dataset_dir: Path) -> DatasetPaths:
+    meta_path = dataset_dir / "meta.json"
+    defaults = {
+        "manifest": "manifest.jsonl",
+        "subtitles_dir": "subtitles/srt",
+        "transcriptions_dir": "transcriptions/text",
+    }
+    if meta_path.exists():
+        with meta_path.open("r", encoding="utf-8") as meta_in:
+            meta = json.load(meta_in)
+        path_config = {**defaults, **meta.get("paths", {})}
+    else:
+        path_config = defaults
+
+    return DatasetPaths(
+        manifest=dataset_dir / path_config["manifest"],
+        subtitles_dir=dataset_dir / path_config["subtitles_dir"],
+        transcriptions_dir=dataset_dir / path_config["transcriptions_dir"],
+    )
+
+
+def _load_manifest(manifest_path: Path, limit: int | None) -> Iterable[dict]:
+    with manifest_path.open("r", encoding="utf-8") as manifest_in:
+        for idx, line in enumerate(manifest_in):
             if limit is not None and idx >= limit:
                 break
-            payload = json.loads(line)
-            transcript_text = str(payload.get("transcript_text", "")).strip()
-            if not transcript_text:
+            yield json.loads(line)
+
+
+def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id: int,
+    progress: Progress) -> list[SegmentRecord]:
+    segments = []
+    for payload in records:
+        transcription_rel = payload.get("transcription_path")
+        if not transcription_rel:
+            progress.update(task_id, advance=1)
+            continue
+        transcription_path = dataset_dir / transcription_rel
+        if not transcription_path.exists():
+            progress.update(task_id, advance=1)
+            continue
+
+        expected_ids = payload.get("episodes") or [payload.get("episode")]
+        expected = {
+            _parse_episode_key(episode_id)
+            for episode_id in expected_ids
+            if episode_id
+        }
+        if not expected:
+            progress.update(task_id, advance=1)
+            continue
+
+        with transcription_path.open("r", encoding="utf-8") as transcript_in:
+            transcript_map = json.load(transcript_in)
+        for segment_index, transcript_text in transcript_map.items():
+            text = str(transcript_text).strip()
+            if not text:
                 continue
-            expected_ids = payload.get("episodes") or [payload.get("episode")]
-            expected = {
-                _parse_episode_key(episode_id)
-                for episode_id in expected_ids
-                if episode_id
-            }
-            if not expected:
+            try:
+                interval_index = int(segment_index)
+            except (TypeError, ValueError):
                 continue
-            yield SegmentRecord(
-                segment_index=int(payload["segment_index"]),
-                transcript_text=transcript_text,
+            segments.append(SegmentRecord(
+                segment_index=interval_index,
+                transcript_text=text,
                 expected=expected,
                 video_path=str(payload.get("video_path", "")),
-            )
+            ))
+        progress.update(task_id, advance=1)
+    return segments
 
 
 def _build_subtitle_vectors(subtitles_dir: Path, interval_seconds: int,
