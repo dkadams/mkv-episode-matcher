@@ -4,10 +4,12 @@ from rich.progress import Progress
 from mkv_episode_matcher.dataset_evaluator import (
     DatasetPaths,
     SegmentRecord,
+    _filter_records_by_profiles,
     _first_expected_rank,
     _load_segments_from_records,
     _parse_episode_key,
     _resolve_dataset_paths,
+    _segments_by_profile,
     _score_segments,
 )
 from mkv_episode_matcher.episode import EpisodeKey
@@ -101,6 +103,7 @@ def test_load_segments_from_manifest_records(tmp_path):
         "video_path": "/shows/video_a.mkv",
         "episodes": ["S01E02", "S01E03"],
         "transcription_path": "transcriptions/text/video_a.json",
+        "variant_profile": "left",
     }]
 
     with Progress() as progress:
@@ -111,3 +114,24 @@ def test_load_segments_from_manifest_records(tmp_path):
     assert segments[0].expected == {EpisodeKey(1, 2), EpisodeKey(1, 3)}
     assert segments[0].segment_index == 0
     assert segments[1].segment_index == 2
+    assert segments[0].variant_profile == "left"
+
+
+def test_filter_records_by_profiles_defaults_to_aligned():
+    records = [
+        {"video_path": "a", "variant_profile": "left"},
+        {"video_path": "b"},
+    ]
+    filtered = _filter_records_by_profiles(records, ["aligned"])
+    assert filtered == [{"video_path": "b"}]
+
+
+def test_segments_grouped_by_profile():
+    segments = [
+        SegmentRecord(0, "a", {EpisodeKey(1, 1)}, "v1", "aligned"),
+        SegmentRecord(1, "b", {EpisodeKey(1, 2)}, "v2", "left"),
+        SegmentRecord(2, "c", {EpisodeKey(1, 3)}, "v3", "left"),
+    ]
+    grouped = _segments_by_profile(segments)
+    assert set(grouped.keys()) == {"aligned", "left"}
+    assert len(grouped["left"]) == 2

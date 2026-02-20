@@ -15,16 +15,21 @@ class AudioChunkExtractor(ContextManager):
 
         self.audio_chunks = set()
 
-    def extract(self, file: Path, start_time: int, duration: int) -> Path:
+    @staticmethod
+    def _effective_start_seconds(start_time: float) -> float:
+        return max(0.0, float(start_time))
 
-        chunk_name = unique_filename(file, f".{duration}S.AT{start_time}s.wav")
+    def extract(self, file: Path, start_time: float, duration: int) -> Path:
+        effective_start = self._effective_start_seconds(start_time)
+        start_ms = int(round(effective_start * 1000))
+        chunk_name = unique_filename(file, f".{duration}S.AT{start_ms}ms.wav")
         chunk_path = self.temp_dir / chunk_name
 
         if not chunk_path.exists():
             cmd = [
                 "ffmpeg",
                 "-ss",
-                str(start_time),
+                f"{effective_start:.3f}",
                 "-t",
                 str(duration),
                 "-i",

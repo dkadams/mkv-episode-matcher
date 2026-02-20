@@ -3,21 +3,29 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from typing import Optional
 
 from loguru import logger
 
 from mkv_episode_matcher.audio_chunk_extractor import AudioChunkExtractor
 from mkv_episode_matcher.config import Configuration
+from mkv_episode_matcher.misalignment import MisalignmentPolicy
 from mkv_episode_matcher.series import Series
 
 
 class SegmentTranscriber:
     def __init__(self, config: Configuration, series: Series,
-        model_name: str, transcriber):
+        model_name: str, transcriber,
+        misalignment_policy: Optional[MisalignmentPolicy] = None,
+        variant_id: Optional[str] = None,
+        output_dir: Optional[Path] = None):
         self.config = config
         self.series = series
         self.transcriber = self._init_transcriber(model_name, transcriber)
-        self.output_dir = series.ensure_transcription_text_dir()
+        self.misalignment_policy = misalignment_policy
+        self.variant_id = variant_id or "aligned"
+        self.output_dir = output_dir or series.ensure_transcription_text_dir()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def _init_transcriber(model_name, transcriber):
@@ -73,14 +81,20 @@ class SegmentTranscriber:
         logger.info(f"Transcribing {path} chunks: {chunk_indexes}")
         duration = self.series.segment_duration
 
-        output = self.series.transcription_file(path)
+        if self.output_dir == self.series.transcriptions_text_dir:
+            output = self.series.transcription_file(path)
+        else:
+            output = self.output_dir / self.series.transcription_file_name(path)
 
         transcribed = {}
         total_extract_time = 0
         total_transcribe_time = 0
         with AudioChunkExtractor() as audio_extractor:
             for index in chunk_indexes:
-                offset = index * duration
+                offset = float(index * duration)
+                if self.misalignment_policy:
+                    video_id = f"{path.resolve()}|{self.variant_id}"
+                    offset += self.misalignment_policy.offset_for(video_id, index)
 
                 before = time.time()
                 chunk_path = audio_extractor.extract(path, offset, duration)

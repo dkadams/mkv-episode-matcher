@@ -27,6 +27,7 @@ class SegmentRecord:
     transcript_text: str
     expected: set[EpisodeKey]
     video_path: str
+    variant_profile: str = "aligned"
 
 @dataclass(frozen=True)
 class DatasetPaths:
@@ -57,6 +58,7 @@ def evaluate_dataset(config: Configuration):
 
     with Progress() as progress:
         records = list(_load_manifest(dataset_paths.manifest, limit=config.args.limit))
+        records = _filter_records_by_profiles(records, config.args.profiles)
         load_task = progress.add_task("Loading transcription segments", total=len(records))
         segments = _load_segments_from_records(
             records,
@@ -77,7 +79,7 @@ def evaluate_dataset(config: Configuration):
             model,
             progress=progress,
         )
-        report = _score_segments(
+        overall_report = _score_segments(
             segments=segments,
             subtitle_vectors=subtitle_vectors,
             model=model,
@@ -85,6 +87,21 @@ def evaluate_dataset(config: Configuration):
             max_failures=config.args.show_failures,
             progress=progress,
         )
+
+    report = {
+        "overall": overall_report,
+    }
+    if config.args.report_by_profile:
+        by_profile = {}
+        for profile, profile_segments in _segments_by_profile(segments).items():
+            by_profile[profile] = _score_segments(
+                segments=profile_segments,
+                subtitle_vectors=subtitle_vectors,
+                model=model,
+                top_ks=top_ks,
+                max_failures=config.args.show_failures,
+            )
+        report["by_profile"] = by_profile
 
     report.update({
         "dataset_dir": str(dataset_dir),
@@ -141,6 +158,18 @@ def _load_manifest(manifest_path: Path, limit: int | None) -> Iterable[dict]:
             yield json.loads(line)
 
 
+def _filter_records_by_profiles(records: list[dict], profiles: list[str] | None) -> list[dict]:
+    if not profiles:
+        return records
+    profile_set = set(profiles)
+    filtered = []
+    for record in records:
+        profile = str(record.get("variant_profile", "aligned"))
+        if profile in profile_set:
+            filtered.append(record)
+    return filtered
+
+
 def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id: int,
     progress: Progress) -> list[SegmentRecord]:
     segments = []
@@ -166,6 +195,7 @@ def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id:
 
         with transcription_path.open("r", encoding="utf-8") as transcript_in:
             transcript_map = json.load(transcript_in)
+        variant_profile = str(payload.get("variant_profile", "aligned"))
         for segment_index, transcript_text in transcript_map.items():
             text = str(transcript_text).strip()
             if not text:
@@ -179,6 +209,7 @@ def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id:
                 transcript_text=text,
                 expected=expected,
                 video_path=str(payload.get("video_path", "")),
+                variant_profile=variant_profile,
             ))
         progress.update(task_id, advance=1)
     return segments
@@ -292,6 +323,13 @@ def _score_segments(segments: list[SegmentRecord],
     }
 
 
+def _segments_by_profile(segments: list[SegmentRecord]) -> dict[str, list[SegmentRecord]]:
+    grouped = {}
+    for segment in segments:
+        grouped.setdefault(segment.variant_profile, []).append(segment)
+    return grouped
+
+
 def _first_expected_rank(ranked: list[EpisodeKey], expected: set[EpisodeKey]) -> int | None:
     for idx, episode in enumerate(ranked, start=1):
         if episode in expected:
@@ -310,12 +348,29 @@ def _print_report(report: dict, top_ks: list[int]):
     table = Table(title="Dataset Evaluation")
     table.add_column("Metric")
     table.add_column("Value")
-    table.add_row("Segments total", str(report["segments_total"]))
-    table.add_row("Segments evaluated", str(report["segments_evaluated"]))
-    table.add_row("Segments missing interval", str(report["segments_missing_interval"]))
+    overall = report["overall"]
+    table.add_row("Segments total", str(overall["segments_total"]))
+    table.add_row("Segments evaluated", str(overall["segments_evaluated"]))
+    table.add_row("Segments missing interval", str(overall["segments_missing_interval"]))
     for k in top_ks:
-        acc = report["accuracy"][f"top_{k}"]
-        hits = report["top_hits"][f"top_{k}"]
+        acc = overall["accuracy"][f"top_{k}"]
+        hits = overall["top_hits"][f"top_{k}"]
         table.add_row(f"Top-{k} accuracy", f"{acc:.4f} ({hits})")
-    table.add_row("MRR", f"{report['mrr']:.4f}")
+    table.add_row("MRR", f"{overall['mrr']:.4f}")
     console.print(table)
+
+    by_profile = report.get("by_profile", {})
+    if by_profile:
+        profile_table = Table(title="By Profile")
+        profile_table.add_column("Profile")
+        profile_table.add_column("Segments")
+        for k in top_ks:
+            profile_table.add_column(f"Top-{k}")
+        profile_table.add_column("MRR")
+        for profile, metrics in sorted(by_profile.items()):
+            row = [profile, str(metrics["segments_evaluated"])]
+            for k in top_ks:
+                row.append(f"{metrics['accuracy'][f'top_{k}']:.4f}")
+            row.append(f"{metrics['mrr']:.4f}")
+            profile_table.add_row(*row)
+        console.print(profile_table)

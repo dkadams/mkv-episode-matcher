@@ -23,6 +23,7 @@ from mkv_episode_matcher.embedding_model import DEFAULT_MODEL_NAME
 from mkv_episode_matcher.embedding_worker import \
     _init_embeddings_extractor_worker, _extract_embeddings_from_transcription
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.misalignment import MisalignmentPolicy
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import SubprocessTranscriber
 from mkv_episode_matcher.transcription_worker import \
@@ -99,9 +100,27 @@ class IndexedEpisodeMatcher:
                 for video in videos
                 for result in query_results[video.embeddings]]
 
-    def get_transcriptions(self, progress: Progress, videos: list[Path]) -> tuple[dict[Path, VideoInfo], PathDict]:
+    def get_transcriptions(self, progress: Progress, videos: list[Path],
+        no_transcription_cache: Optional[bool] = None,
+        transcription_output_dir: Optional[Path] = None,
+        misalignment_policy: Optional[MisalignmentPolicy] = None,
+        variant_id: Optional[str] = None) -> tuple[dict[Path, VideoInfo], PathDict]:
         if not videos:
             return {}, {}
+
+        if transcription_output_dir:
+            transcription_output_dir.mkdir(parents=True, exist_ok=True)
+
+        cache_enabled = not (
+            self.config.args.no_transcription_cache
+            if no_transcription_cache is None
+            else no_transcription_cache
+        )
+
+        def transcription_file_for(path: Path) -> Path:
+            if transcription_output_dir:
+                return transcription_output_dir / self.series.transcription_file_name(path)
+            return self.series.transcription_file(path)
 
         read_cache_task = progress.add_task(f"Reading video info cache",
                                             total=1)
@@ -142,7 +161,7 @@ class IndexedEpisodeMatcher:
 
             def get_cached_segment_count(path: Path) -> tuple[Path, int]:
                 logger.info(f"Checking for cached transcription for: {path}")
-                transcript = self.series.transcription_file(path)
+                transcript = transcription_file_for(path)
                 if not transcript.exists():
                     return path, 0
                 logger.info(f"Found cached transcription for: {path}")
@@ -160,7 +179,7 @@ class IndexedEpisodeMatcher:
 
             futures = [threads.submit(get_video_info, path)
                        for path in videos]
-            if not self.config.args.no_transcription_cache:
+            if cache_enabled:
                 futures.extend(threads.submit(get_cached_segment_count, path)
                                for path in videos)
             logger.info(f"Submitted video info and transcript cache tasks: {len(futures)}")
@@ -203,7 +222,7 @@ class IndexedEpisodeMatcher:
                 segments_to_transcribe[path] = segment_indexes[start:end]
                 segments_to_transcribe_count += segments_needed
             else:
-                cached_transcripts[path] = self.series.transcription_file(path)
+                cached_transcripts[path] = transcription_file_for(path)
 
         transcription_progress = progress.add_task(f"Transcribing segments",
                                                    total=len(segments_to_transcribe))
@@ -216,14 +235,16 @@ class IndexedEpisodeMatcher:
                 max_workers=10,
                 initializer=_init_transcription_worker,
                 initargs=(self.config, self.series, transcriber_type,
-                          self.text_extractor_model))
+                          self.text_extractor_model, misalignment_policy,
+                          variant_id, transcription_output_dir))
         else:
             ctx = multiprocessing.get_context("spawn")
             executor = ProcessPoolExecutor(
                 max_workers=8,
                 initializer=_init_transcription_worker,
                 initargs=(self.config, self.series, transcriber_type,
-                          self.text_extractor_model),
+                          self.text_extractor_model, misalignment_policy,
+                          variant_id, transcription_output_dir),
                 mp_context=ctx)
 
         with executor as transcribers:

@@ -175,6 +175,48 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
     )
 
     collect_parser.add_argument(
+        "--misalign-profiles",
+        nargs="+",
+        choices=["left", "right", "random"],
+        default=["left", "right", "random"],
+        help="Generate misaligned transcription variants for selected profiles",
+    )
+
+    collect_parser.add_argument(
+        "--misalign-min-seconds",
+        type=float,
+        default=1.0,
+        help="Minimum absolute audio shift in seconds for misaligned variants",
+    )
+
+    collect_parser.add_argument(
+        "--misalign-max-seconds",
+        type=float,
+        default=3.0,
+        help="Maximum absolute audio shift in seconds for misaligned variants",
+    )
+
+    collect_parser.add_argument(
+        "--misalign-seed",
+        type=int,
+        default=None,
+        help="Random seed for deterministic misalignment generation",
+    )
+
+    collect_parser.add_argument(
+        "--misalign-per-segment",
+        action="store_true",
+        help="Apply new offset per segment for left/right profiles",
+    )
+
+    collect_parser.add_argument(
+        "--include-aligned",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include aligned transcript variants in the collected dataset",
+    )
+
+    collect_parser.add_argument(
         "--segment-duration",
         type=int,
         default=None,
@@ -231,6 +273,19 @@ def add_evaluate_dataset(subparsers, config_parser):
     evaluate_parser.add_argument(
         "dataset_dir",
         help="Path to a dataset directory created by collect-dataset",
+    )
+    evaluate_parser.add_argument(
+        "--profiles",
+        nargs="+",
+        choices=["aligned", "left", "right", "random"],
+        default=["aligned", "left", "right", "random"],
+        help="Filter manifest entries to specific variant profiles",
+    )
+    evaluate_parser.add_argument(
+        "--report-by-profile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include per-profile metrics in output",
     )
     evaluate_parser.add_argument(
         "--output",

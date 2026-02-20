@@ -2,6 +2,10 @@
 requires = ["setuptools>=61.0", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["mkv_episode_matcher*"]
+exclude = ["tests*", "data*", "dataset*", "logs*"]
+
 [tool.setuptools_scm]
 # See configuration details in https://github.com/pypa/setuptools_scm
 
@@ -121,5 +125,4 @@ pythonpath = ["."]
 addopts = "-ra -q --cov=mkv_episode_matcher --cov-report=term-missing"
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-
 
