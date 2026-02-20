@@ -91,7 +91,7 @@ Options:
 - `--no-transcription-cache`: Disable reusing cached transcriptions
 - `--display-by-episode`, `-E`: Show results grouped by episode (default)
 - `--display-by-file`, `-F`: Show results grouped by file
-- `--whisper`, `--faster-whisper`, `--whispercpp-cli`, `--whisperkit-cli`, `--parakeet-mlx`: Transcriber backend (default: whisper.cpp CLI)
+- `--whisper`, `--faster-whisper`, `--whispercpp-cli`, `--whisperkit-cli`, `--parakeet-mlx`: Transcriber backend (default: parakeet-mlx)
 
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.

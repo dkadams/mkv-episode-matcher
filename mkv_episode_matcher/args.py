@@ -218,7 +218,7 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
 
     collect_parser.set_defaults(
         func=collect_dataset,
-        transcriber=WhispercppCliTranscriber,
+        transcriber=ParakeetMlxCliTranscriber,
     )
 
 def add_evaluate_dataset(subparsers, config_parser):
@@ -325,7 +325,7 @@ def add_match(subparsers, config_parser, index_parser):
 
 
     match_parser.set_defaults(func=match_episodes,
-                              transcriber=WhispercppCliTranscriber,
+                              transcriber=ParakeetMlxCliTranscriber,
                               display_by_episode=True,)
 
 
