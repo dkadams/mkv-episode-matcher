@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
-from mkv_episode_matcher.transcribers import ParakeetMlxCliTranscriber
+from mkv_episode_matcher.transcribers import (
+    ParakeetMlxCliTranscriber,
+    ParakeetMlxGenerateBatchTranscriber,
+)
 
 
 def test_parakeet_mlx_uses_default_model_for_whisper_name(monkeypatch):
@@ -52,3 +55,64 @@ def test_parakeet_mlx_transcribe_handles_exception(monkeypatch, tmp_path):
     )
     transcriber = ParakeetMlxCliTranscriber(None)
     assert transcriber.transcribe(tmp_path / "chunk.wav") is None
+
+
+def test_parakeet_mlx_batch_transcribe_many_splits_batches(monkeypatch, tmp_path):
+    monkeypatch.setenv("PARAKEET_MLX_BATCH_SIZE", "2")
+    monkeypatch.setattr(
+        ParakeetMlxGenerateBatchTranscriber,
+        "_load_model",
+        staticmethod(lambda *_args, **_kwargs: object()),
+    )
+
+    calls = []
+
+    def fake_transcribe_batch(self, audio_paths, *, batch_id):
+        calls.append(list(audio_paths))
+        return [f"text-{path.stem}" for path in audio_paths]
+
+    monkeypatch.setattr(
+        ParakeetMlxGenerateBatchTranscriber,
+        "_transcribe_batch",
+        fake_transcribe_batch,
+    )
+
+    transcriber = ParakeetMlxGenerateBatchTranscriber(None)
+    audio_paths = [tmp_path / f"chunk_{i}.wav" for i in range(5)]
+    text = transcriber.transcribe_many(audio_paths)
+
+    assert calls == [
+        audio_paths[0:2],
+        audio_paths[2:4],
+        audio_paths[4:5],
+    ]
+    assert text == [f"text-chunk_{i}" for i in range(5)]
+
+
+def test_parakeet_mlx_batch_transcribe_many_handles_batch_failure(monkeypatch, tmp_path):
+    monkeypatch.setenv("PARAKEET_MLX_BATCH_SIZE", "2")
+    monkeypatch.setattr(
+        ParakeetMlxGenerateBatchTranscriber,
+        "_load_model",
+        staticmethod(lambda *_args, **_kwargs: object()),
+    )
+
+    calls = []
+
+    def fake_transcribe_batch(self, audio_paths, *, batch_id):
+        calls.append(list(audio_paths))
+        if len(calls) == 2:
+            raise RuntimeError("boom")
+        return [f"text-{path.stem}" for path in audio_paths]
+
+    monkeypatch.setattr(
+        ParakeetMlxGenerateBatchTranscriber,
+        "_transcribe_batch",
+        fake_transcribe_batch,
+    )
+
+    transcriber = ParakeetMlxGenerateBatchTranscriber(None)
+    audio_paths = [tmp_path / f"chunk_{i}.wav" for i in range(4)]
+    text = transcriber.transcribe_many(audio_paths)
+
+    assert text == ["text-chunk_0", "text-chunk_1", None, None]

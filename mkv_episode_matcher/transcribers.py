@@ -4,6 +4,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Iterable
 
 import torch
 import whisper
@@ -243,3 +244,114 @@ class ParakeetMlxCliTranscriber:
 
         text = getattr(result, "text", None)
         return str(text).strip() if text else None
+
+
+class ParakeetMlxGenerateBatchTranscriber(ParakeetMlxCliTranscriber):
+    """Batch adapter for parakeet-mlx using model.generate()."""
+
+    def __init__(self, model_name: str | None):
+        super().__init__(model_name)
+        self.batch_size = max(
+            1, int(os.environ.get("PARAKEET_MLX_BATCH_SIZE", "8"))
+        )
+        self.batch_debug = self._is_truthy(os.environ.get("PARAKEET_MLX_BATCH_DEBUG"))
+        self._batch_counter = 0
+
+    def transcribe(self, audio_path: Path):
+        result = self.transcribe_many([audio_path])
+        return result[0] if result else None
+
+    def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
+        if not audio_paths:
+            return []
+
+        results: list[str | None] = []
+        for batch in self._chunked(audio_paths, self.batch_size):
+            batch_id = self._batch_counter
+            self._batch_counter += 1
+            try:
+                results.extend(self._transcribe_batch(batch, batch_id=batch_id))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "parakeet-mlx batch transcription failed (batch_id={}, size={}): {}",
+                    batch_id,
+                    len(batch),
+                    exc,
+                )
+                self._debug_batch(
+                    "batch_failure",
+                    {
+                        "batch_id": batch_id,
+                        "size": len(batch),
+                        "paths": [str(path) for path in batch],
+                        "error": str(exc),
+                    },
+                )
+                results.extend([None] * len(batch))
+        return results
+
+    @staticmethod
+    def _chunked(paths: list[Path], size: int) -> Iterable[list[Path]]:
+        for i in range(0, len(paths), size):
+            yield paths[i:i + size]
+
+    def _transcribe_batch(self, audio_paths: list[Path], *, batch_id: int) -> list[str | None]:
+        from mlx import core as mx
+        from parakeet_mlx.audio import get_logmel, load_audio
+
+        mels = []
+        mel_shapes = []
+        pad_lengths = []
+        for audio_path in audio_paths:
+            audio = load_audio(Path(audio_path), self.model.preprocessor_config.sample_rate)
+            mel = get_logmel(audio, self.model.preprocessor_config)[0]
+            mels.append(mel)
+            mel_shapes.append(tuple(int(dim) for dim in mel.shape))
+
+        max_length = max(int(mel.shape[0]) for mel in mels)
+        padded = []
+        for mel in mels:
+            pad = max_length - int(mel.shape[0])
+            pad_lengths.append(pad)
+            if pad > 0:
+                mel = mx.pad(mel, ((0, pad), (0, 0)))
+            padded.append(mel)
+
+        batch_mel = mx.stack(padded, axis=0)
+        self._debug_batch(
+            "pre_generate",
+            {
+                "batch_id": batch_id,
+                "size": len(audio_paths),
+                "paths": [str(path) for path in audio_paths],
+                "mel_shapes": mel_shapes,
+                "pad_lengths": pad_lengths,
+                "batch_shape": tuple(int(dim) for dim in batch_mel.shape),
+            },
+        )
+        generated = self.model.generate(batch_mel)
+
+        if len(generated) != len(audio_paths):
+            raise RuntimeError(
+                f"Expected {len(audio_paths)} results but received {len(generated)}"
+            )
+
+        text_results: list[str | None] = []
+        for result in generated:
+            text = getattr(result, "text", None)
+            text_results.append(str(text).strip() if text else None)
+        self._debug_batch(
+            "post_generate",
+            {
+                "batch_id": batch_id,
+                "size": len(audio_paths),
+                "result_count": len(text_results),
+                "non_empty_text_count": sum(1 for text in text_results if text),
+            },
+        )
+        return text_results
+
+    def _debug_batch(self, phase: str, payload: dict) -> None:
+        if not self.batch_debug:
+            return
+        logger.info("parakeet-mlx-batch debug [{}] {}", phase, payload)

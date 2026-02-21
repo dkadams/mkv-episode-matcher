@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -74,8 +74,65 @@ class SegmentTranscriber:
                 .replace("[BLANK_AUDIO]", " "))
 
     def execute(self, input: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
+        if hasattr(self.transcriber, "transcribe_many"):
+            return self._execute_batch(input)
         return {path: self.transcribe(path, chunk_indexes)
                 for path, chunk_indexes in input}
+
+    def _execute_batch(self, inputs: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
+        duration = self.series.segment_duration
+        outputs = {path: self.series.transcription_file(path) for path, _ in inputs}
+
+        pending: list[tuple[Path, int, Path]] = []
+        total_extract_time = 0.0
+        with AudioChunkExtractor() as audio_extractor:
+            for path, chunk_indexes in inputs:
+                logger.info(f"Transcribing {path} chunks: {chunk_indexes}")
+                for index in chunk_indexes:
+                    offset = index * duration
+                    before = time.time()
+                    chunk_path = audio_extractor.extract(path, offset, duration)
+                    total_extract_time += time.time() - before
+                    pending.append((path, index, chunk_path))
+
+            raw_results: list[Any] = []
+            total_transcribe_time = 0.0
+            if pending:
+                before = time.time()
+                raw_results = self.transcriber.transcribe_many(
+                    [chunk_path for _, _, chunk_path in pending]
+                )
+                total_transcribe_time += time.time() - before
+
+            if pending and len(raw_results) != len(pending):
+                logger.warning(
+                    "Batch transcriber returned {} results for {} chunks",
+                    len(raw_results),
+                    len(pending),
+                )
+                if len(raw_results) < len(pending):
+                    raw_results = raw_results + [None] * (len(pending) - len(raw_results))
+                else:
+                    raw_results = raw_results[:len(pending)]
+
+            transcribed_by_path: dict[Path, dict[int, str]] = {path: {} for path, _ in inputs}
+            for (path, index, chunk_path), raw_transcript in zip(pending, raw_results):
+                text = self._normalize_transcript(raw_transcript)
+                if text:
+                    transcribed_by_path[path][index] = text
+                else:
+                    logger.warning(f"Failed to transcribe {chunk_path}")
+
+        logger.info(
+            f"Extracted {len(pending)} audio chunks in {total_extract_time:.2f}s, "
+            f"transcribed in {total_transcribe_time:.2f}s"
+        )
+
+        for path, output in outputs.items():
+            transcribed = transcribed_by_path.get(path, {})
+            self._write_transcript(output, transcribed)
+
+        return outputs
 
     def transcribe(self, path: Path, chunk_indexes: list[int]) -> Path:
         logger.info(f"Transcribing {path} chunks: {chunk_indexes}")
@@ -114,15 +171,19 @@ class SegmentTranscriber:
                     f"in {total_extract_time:.2f}s, transcribed "
                     f"in {total_transcribe_time:.2f}s")
 
+        self._write_transcript(output, transcribed)
+        return output
+
+    @staticmethod
+    def _write_transcript(output: Path, transcribed: dict[int, str]) -> None:
         existing_transcript = {}
         if output.exists():
-            existing_transcript = json.load(open(output))
+            with open(output) as existing:
+                existing_transcript = json.load(existing)
 
         with open(output, "w") as json_out:
             full_transcript = existing_transcript | transcribed
             json.dump(full_transcript, json_out)
-
-        return output
 
     @staticmethod
     def _extract_text(payload: dict) -> str | None:

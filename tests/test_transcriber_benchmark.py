@@ -58,6 +58,19 @@ def test_benchmark_parser_backend_filter():
     assert args.backend == ["whispercpp-cli", "parakeet-mlx"]
 
 
+def test_benchmark_parser_accepts_parakeet_batch_backend():
+    parser = build_args_parser()
+    args = parser.parse_args(
+        [
+            "benchmark-transcribers",
+            "video.mkv",
+            "--backend",
+            "parakeet-mlx-batch",
+        ]
+    )
+    assert args.backend == ["parakeet-mlx-batch"]
+
+
 def test_benchmark_uses_all_backends_by_default(monkeypatch, tmp_path):
     parser = build_args_parser()
     args = parser.parse_args(["benchmark-transcribers", str(tmp_path / "in")])

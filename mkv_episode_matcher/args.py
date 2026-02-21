@@ -22,6 +22,7 @@ from mkv_episode_matcher.transcribers import (
     WhispercppCliTranscriber,
     WhisperKitCliTranscriber,
     ParakeetMlxCliTranscriber,
+    ParakeetMlxGenerateBatchTranscriber,
 )
 
 def build_args_parser():
@@ -257,10 +258,14 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
         "--parakeet-mlx", dest="transcriber",
         action="store_const", const=ParakeetMlxCliTranscriber,
         help="Use parakeet-mlx for transcription.")
+    xscriber_group.add_argument(
+        "--parakeet-mlx-batch", dest="transcriber",
+        action="store_const", const=ParakeetMlxGenerateBatchTranscriber,
+        help="Use parakeet-mlx model.generate batching for transcription.")
 
     collect_parser.set_defaults(
         func=collect_dataset,
-        transcriber=ParakeetMlxCliTranscriber,
+        transcriber=ParakeetMlxGenerateBatchTranscriber,
     )
 
 def add_evaluate_dataset(subparsers, config_parser):
@@ -377,10 +382,14 @@ def add_match(subparsers, config_parser, index_parser):
         "--parakeet-mlx", dest="transcriber",
         action="store_const", const=ParakeetMlxCliTranscriber,
         help="Use parakeet-mlx for transcription.")
+    xscriber_group.add_argument(
+        "--parakeet-mlx-batch", dest="transcriber",
+        action="store_const", const=ParakeetMlxGenerateBatchTranscriber,
+        help="Use parakeet-mlx model.generate batching for transcription.")
 
 
     match_parser.set_defaults(func=match_episodes,
-                              transcriber=ParakeetMlxCliTranscriber,
+                              transcriber=ParakeetMlxGenerateBatchTranscriber,
                               display_by_episode=True,)
 
 
