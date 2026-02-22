@@ -1,85 +1,30 @@
-from pathlib import Path
-
-from mkv_episode_matcher import segment_transcriber as tse
+from mkv_episode_matcher.segment_transcriber import SegmentTranscriber
 
 
-class DummyTranscriber:
-    def __init__(self):
-        self.calls = []
-
-    def transcribe(self, audio_path):
-        path = Path(audio_path)
-        self.calls.append(path)
-        return {"text": f"text-for-{path.stem}"}
-
-
-def test_get_random_segments_uses_transcriber(monkeypatch):
-    extract_calls = []
-
-    class DummyAudioChunkExtractor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            pass
-
-        def extract(self, file_path, offset, duration):
-            extract_calls.append((offset, duration))
-            return Path(f"/fake/chunk_{offset}.wav")
-
-    monkeypatch.setattr(tse, "AudioChunkExtractor", DummyAudioChunkExtractor)
-    monkeypatch.setattr(tse.random, "sample", lambda population, k: [1, 3][:k])
-    monkeypatch.setattr(tse.get_video_duration, "get_video_duration", lambda _: 400)
-
-    transcriber = DummyTranscriber()
-    extractor = tse.SegmentTranscriber("tiny", transcriber=transcriber)
-
-    segments = extractor.get_random_segments(Path("video.mkv"), duration=50, count=2)
-
-    assert [index for index, _segment in segments] == [1, 3]
-    assert extract_calls == [(50, 50), (150, 50)]
-    assert transcriber.calls == [
-        Path("/fake/chunk_50.wav"),
-        Path("/fake/chunk_150.wav"),
-    ]
+def test_normalize_transcript_dict_segments():
+    payload = {
+        "segments": [
+            {"text": " Hello "},
+            {"text": "from"},
+            {"text": "segment transcriber"},
+        ]
+    }
+    assert SegmentTranscriber._normalize_transcript(payload) == (
+        "Hello from segment transcriber"
+    )
 
 
-def test_get_text_segments_returns_indexed_text(monkeypatch):
-    class DummyAudioChunkExtractor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            pass
-
-        def extract(self, file_path, offset, duration):
-            return Path(f"/fake/chunk_{offset}.wav")
-
-    monkeypatch.setattr(tse, "AudioChunkExtractor", DummyAudioChunkExtractor)
-    monkeypatch.setattr(tse.random, "sample", lambda population, k: list(population)[:k])
-    monkeypatch.setattr(tse.get_video_duration, "get_video_duration", lambda _: 80)
-
-    class TextReturningTranscriber:
-        def transcribe(self, audio_path):
-            return {"text": Path(audio_path).stem}
-
-    extractor = tse.SegmentTranscriber("tiny", transcriber=TextReturningTranscriber())
-
-    segments = extractor.get_segments(Path("video.mkv"))
-
-    assert segments == [
-        (0, "chunk_0"),
-        (1, "chunk_30"),
-        (2, "chunk_60"),
-    ]
+def test_normalize_transcript_strips_blank_audio_marker():
+    transcript = "alpha [BLANK_AUDIO] beta"
+    assert SegmentTranscriber._normalize_transcript(transcript) == "alpha   beta"
 
 
-def test_whisperkit_extract_text_prefers_segments():
+def test_extract_text_prefers_segment_entries():
     payload = {
         "files": [
             {
                 "path": "audio.wav",
-                "text": "short text",
+                "text": "fallback text",
                 "segments": [
                     {"text": "Hello"},
                     {"text": "from"},
@@ -89,6 +34,5 @@ def test_whisperkit_extract_text_prefers_segments():
         ]
     }
 
-    text = tse.WhisperKitCliTranscriber._extract_text(payload)
-
+    text = SegmentTranscriber._extract_text(payload)
     assert text == "Hello from WhisperKit"

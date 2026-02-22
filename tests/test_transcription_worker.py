@@ -25,7 +25,7 @@ def test_init_transcription_worker_reinitializes_each_time(monkeypatch):
     created = []
 
     class DummySegmentTranscriber:
-        def __init__(self, config, series, model_name, transcriber):
+        def __init__(self, config, series, model_name, transcriber, **kwargs):
             created.append((model_name, transcriber))
 
         def execute(self, inputs):

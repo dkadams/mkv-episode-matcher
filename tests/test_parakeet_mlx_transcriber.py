@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from mkv_episode_matcher.transcribers import (
     ParakeetMlxCliTranscriber,
     ParakeetMlxGenerateBatchTranscriber,
@@ -113,6 +115,5 @@ def test_parakeet_mlx_batch_transcribe_many_handles_batch_failure(monkeypatch, t
 
     transcriber = ParakeetMlxGenerateBatchTranscriber(None)
     audio_paths = [tmp_path / f"chunk_{i}.wav" for i in range(4)]
-    text = transcriber.transcribe_many(audio_paths)
-
-    assert text == ["text-chunk_0", "text-chunk_1", None, None]
+    with pytest.raises(RuntimeError, match="batch_id=1"):
+        transcriber.transcribe_many(audio_paths)

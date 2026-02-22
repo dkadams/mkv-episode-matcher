@@ -31,7 +31,7 @@ def test_execute_uses_transcribe_many_when_available(monkeypatch, tmp_path):
             pass
 
         def extract(self, _file_path, offset, _duration):
-            return tmp_path / f"chunk_{offset}.wav"
+            return tmp_path / f"chunk_{int(offset)}.wav"
 
     class DummyBatchTranscriber:
         def __init__(self, _model_name):
@@ -79,7 +79,7 @@ def test_execute_falls_back_to_transcribe(monkeypatch, tmp_path):
             pass
 
         def extract(self, _file_path, offset, _duration):
-            return tmp_path / f"chunk_{offset}.wav"
+            return tmp_path / f"chunk_{int(offset)}.wav"
 
     class SingleTranscriber:
         def __init__(self, _model_name):

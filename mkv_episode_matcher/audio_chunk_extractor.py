@@ -46,7 +46,18 @@ class AudioChunkExtractor(ContextManager):
                 "-y",  # Overwrite output files without asking
                 str(chunk_path),
             ]
-            subprocess.run(cmd, capture_output=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if result.returncode != 0:
+                stderr = (result.stderr or "").strip()
+                stderr = stderr[:1000] + ("...[truncated]" if len(stderr) > 1000 else "")
+                raise RuntimeError(
+                    f"ffmpeg failed extracting chunk from {file} at {effective_start:.3f}s "
+                    f"for {duration}s: {stderr}"
+                )
+            if not chunk_path.exists() or chunk_path.stat().st_size == 0:
+                raise RuntimeError(
+                    f"ffmpeg reported success but produced no usable output: {chunk_path}"
+                )
             self.audio_chunks.add(chunk_path)
 
         return chunk_path

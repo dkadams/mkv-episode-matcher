@@ -287,7 +287,10 @@ class ParakeetMlxGenerateBatchTranscriber(ParakeetMlxCliTranscriber):
                         "error": str(exc),
                     },
                 )
-                results.extend([None] * len(batch))
+                raise RuntimeError(
+                    "parakeet-mlx batch transcription failed "
+                    f"(batch_id={batch_id}, size={len(batch)})"
+                ) from exc
         return results
 
     @staticmethod
