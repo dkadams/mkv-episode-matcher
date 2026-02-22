@@ -240,7 +240,7 @@ class IndexedEpisodeMatcher:
         else:
             ctx = multiprocessing.get_context("spawn")
             executor = ProcessPoolExecutor(
-                max_workers=8,
+                max_workers=4,
                 initializer=_init_transcription_worker,
                 initargs=(self.config, self.series, transcriber_type,
                           self.text_extractor_model, misalignment_policy,
