@@ -29,7 +29,7 @@ class AudioChunkExtractor(ContextManager):
 
         if not chunk_path.exists():
             temp_chunk_path = self.temp_dir / (
-                f"{chunk_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+                f"{chunk_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}.wav"
             )
             cmd = [
                 "ffmpeg",
