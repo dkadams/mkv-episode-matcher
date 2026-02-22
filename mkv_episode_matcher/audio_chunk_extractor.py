@@ -1,5 +1,7 @@
+import os
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import ContextManager
 
@@ -26,6 +28,9 @@ class AudioChunkExtractor(ContextManager):
         chunk_path = self.temp_dir / chunk_name
 
         if not chunk_path.exists():
+            temp_chunk_path = self.temp_dir / (
+                f"{chunk_name}.tmp.{os.getpid()}.{uuid.uuid4().hex}"
+            )
             cmd = [
                 "ffmpeg",
                 "-ss",
@@ -44,20 +49,29 @@ class AudioChunkExtractor(ContextManager):
                 "-ac",
                 "1",
                 "-y",  # Overwrite output files without asking
-                str(chunk_path),
+                str(temp_chunk_path),
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode != 0:
+                temp_chunk_path.unlink(missing_ok=True)
                 stderr = (result.stderr or "").strip()
                 stderr = stderr[:1000] + ("...[truncated]" if len(stderr) > 1000 else "")
                 raise RuntimeError(
                     f"ffmpeg failed extracting chunk from {file} at {effective_start:.3f}s "
                     f"for {duration}s: {stderr}"
                 )
-            if not chunk_path.exists() or chunk_path.stat().st_size == 0:
+            if not temp_chunk_path.exists() or temp_chunk_path.stat().st_size == 0:
+                temp_chunk_path.unlink(missing_ok=True)
                 raise RuntimeError(
-                    f"ffmpeg reported success but produced no usable output: {chunk_path}"
+                    f"ffmpeg reported success but produced no usable output: {temp_chunk_path}"
                 )
+            try:
+                os.replace(temp_chunk_path, chunk_path)
+            except Exception as exc:  # noqa: BLE001
+                temp_chunk_path.unlink(missing_ok=True)
+                raise RuntimeError(
+                    f"Failed to commit extracted chunk atomically: {chunk_path}: {exc}"
+                ) from exc
             self.audio_chunks.add(chunk_path)
 
         return chunk_path
