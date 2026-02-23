@@ -12,6 +12,7 @@ from mkv_episode_matcher.transcriber_benchmark import (
     BENCHMARK_BACKEND_CHOICES,
     BenchmarkGroup,
     BenchmarkResult,
+    _benchmark_group,
     _build_ephemeral_series,
     _get_segment_indexes,
     _make_executor,
@@ -286,3 +287,60 @@ def test_make_executor_uses_process_for_python_transcriber(monkeypatch):
     _make_executor(NonSubprocessTranscriber, 3, 2, config, series)
     assert "process" in seen
     assert "thread" not in seen
+
+
+def test_benchmark_group_aggregates_extract_and_transcribe_metrics(monkeypatch, tmp_path):
+    parser = build_args_parser()
+    args = parser.parse_args(["benchmark-transcribers", str(tmp_path / "in")])
+    config = _config_from_args(args)
+
+    video = tmp_path / "episode.mkv"
+    video.write_text("x", encoding="utf-8")
+
+    group = BenchmarkGroup(
+        key="__adhoc__",
+        files=[video],
+        source_series=None,
+        segment_duration=30,
+        random_seed=12345,
+    )
+
+    monkeypatch.setattr(
+        "mkv_episode_matcher.transcriber_benchmark._collect_video_infos",
+        lambda _files, _duration: {
+            video: VideoInfo(
+                full_path_str=str(video.resolve()),
+                byte_count=video.stat().st_size,
+                minutes=1.0,
+                segments=2,
+            )
+        },
+    )
+    monkeypatch.setattr(
+        "mkv_episode_matcher.transcriber_benchmark._get_segment_indexes",
+        lambda _cfg, _series, _infos: [0],
+    )
+
+    def fake_transcribe_segments(_cfg, series, _transcriber_type, segments_to_transcribe):
+        outputs = {}
+        for path in segments_to_transcribe:
+            output = series.transcription_file(path)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text('{"0": "hello"}', encoding="utf-8")
+            output.with_suffix(".metrics.json").write_text(
+                '{"extract_seconds": 3.5, "transcribe_seconds": 1.25}',
+                encoding="utf-8",
+            )
+            outputs[path] = output
+        return outputs, []
+
+    monkeypatch.setattr(
+        "mkv_episode_matcher.transcriber_benchmark._transcribe_segments",
+        fake_transcribe_segments,
+    )
+
+    result = _benchmark_group(config, WhispercppCliTranscriber, group, tmp_path / "bench-root")
+    assert result.files_succeeded == 1
+    assert result.transcribed_segments == 1
+    assert result.extract_seconds == 3.5
+    assert result.transcribe_seconds == 1.25

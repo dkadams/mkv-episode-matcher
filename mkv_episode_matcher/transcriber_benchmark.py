@@ -74,6 +74,8 @@ class BenchmarkResult:
     transcribed_segments: int = 0
     sampled_audio_minutes: float = 0.0
     wall_seconds: float = 0.0
+    extract_seconds: float = 0.0
+    transcribe_seconds: float = 0.0
     errors: list[str] = dataclasses.field(default_factory=list)
 
     @property
@@ -91,6 +93,18 @@ class BenchmarkResult:
         if self.sampled_audio_minutes <= 0:
             return None
         return self.wall_seconds / self.sampled_audio_minutes
+
+    @property
+    def extract_sec_per_media_min(self) -> float | None:
+        if self.sampled_audio_minutes <= 0:
+            return None
+        return self.extract_seconds / self.sampled_audio_minutes
+
+    @property
+    def transcribe_sec_per_media_min(self) -> float | None:
+        if self.sampled_audio_minutes <= 0:
+            return None
+        return self.transcribe_seconds / self.sampled_audio_minutes
 
     def add_error(self, message: str):
         message = str(message).strip()
@@ -145,6 +159,8 @@ def _run_backend(
             result.sampled_segments += group_result.sampled_segments
             result.transcribed_segments += group_result.transcribed_segments
             result.sampled_audio_minutes += group_result.sampled_audio_minutes
+            result.extract_seconds += group_result.extract_seconds
+            result.transcribe_seconds += group_result.transcribe_seconds
             for error in group_result.errors:
                 result.add_error(f"{group.key}: {error}")
 
@@ -189,6 +205,8 @@ def _benchmark_group(
 
     files_succeeded = 0
     transcribed_segments = 0
+    extract_seconds = 0.0
+    transcribe_seconds = 0.0
     for path in group.files:
         selected = segments_to_transcribe.get(path, [])
         if not selected:
@@ -212,6 +230,14 @@ def _benchmark_group(
 
         chunk_count = len(payload)
         transcribed_segments += chunk_count
+        metrics_path = transcript_path.with_suffix(".metrics.json")
+        if metrics_path.exists():
+            try:
+                metrics_payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+                extract_seconds += float(metrics_payload.get("extract_seconds", 0.0))
+                transcribe_seconds += float(metrics_payload.get("transcribe_seconds", 0.0))
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{path}: invalid metrics JSON ({exc})")
         if chunk_count > 0:
             files_succeeded += 1
         else:
@@ -224,6 +250,8 @@ def _benchmark_group(
         sampled_segments=sampled_segments,
         transcribed_segments=transcribed_segments,
         sampled_audio_minutes=sampled_audio_minutes,
+        extract_seconds=extract_seconds,
+        transcribe_seconds=transcribe_seconds,
     )
     for error in errors:
         result.add_error(error)
@@ -419,10 +447,16 @@ def _display_results(results: list[BenchmarkResult]):
     table.add_column("Transcribed Segments", justify="right")
     table.add_column("Sampled Audio (min)", justify="right")
     table.add_column("Sec / Media Min", justify="right")
+    table.add_column("Extract (s)", justify="right")
+    table.add_column("Transcribe (s)", justify="right")
+    table.add_column("Extract / Media Min", justify="right")
+    table.add_column("Transcribe / Media Min", justify="right")
     table.add_column("Errors")
 
     for result in results:
         sec_per_media = result.sec_per_media_min
+        extract_per_media = result.extract_sec_per_media_min
+        transcribe_per_media = result.transcribe_sec_per_media_min
         errors = "; ".join(result.errors[:3])
         if len(result.errors) > 3:
             errors = f"{errors}; +{len(result.errors) - 3} more"
@@ -435,6 +469,10 @@ def _display_results(results: list[BenchmarkResult]):
             str(result.transcribed_segments),
             f"{result.sampled_audio_minutes:.2f}",
             "-" if sec_per_media is None else f"{sec_per_media:.2f}",
+            f"{result.extract_seconds:.2f}",
+            f"{result.transcribe_seconds:.2f}",
+            "-" if extract_per_media is None else f"{extract_per_media:.2f}",
+            "-" if transcribe_per_media is None else f"{transcribe_per_media:.2f}",
             errors,
         )
     console.print(table)

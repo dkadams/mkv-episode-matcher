@@ -66,6 +66,11 @@ def test_execute_uses_transcribe_many_when_available(monkeypatch, tmp_path):
     assert payload["0"] == "text-chunk_0"
     assert payload["1"] == "cached"
     assert payload["2"] == "text-chunk_60"
+    metrics = json.loads(output.with_suffix(".metrics.json").read_text(encoding="utf-8"))
+    assert metrics["extract_seconds"] >= 0.0
+    assert metrics["transcribe_seconds"] >= 0.0
+    assert metrics["segments_attempted"] == 2
+    assert metrics["segments_transcribed"] == 2
 
 
 def test_execute_falls_back_to_transcribe(monkeypatch, tmp_path):

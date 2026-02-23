@@ -90,6 +90,8 @@ class SegmentTranscriber:
     def _execute_batch(self, inputs: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
         duration = self.series.segment_duration
         outputs = {path: self.series.transcription_file(path) for path, _ in inputs}
+        per_path_extract_seconds: dict[Path, float] = {path: 0.0 for path, _ in inputs}
+        per_path_pending_counts: dict[Path, int] = {path: 0 for path, _ in inputs}
 
         pending: list[tuple[Path, int, Path]] = []
         total_extract_time = 0.0
@@ -118,8 +120,11 @@ class SegmentTranscriber:
                         })
                         logger.error(f"Audio extraction failed for {path} segment {index}: {exc}")
                         continue
-                    total_extract_time += time.time() - before
+                    extract_elapsed = time.time() - before
+                    total_extract_time += extract_elapsed
+                    per_path_extract_seconds[path] += extract_elapsed
                     pending.append((path, index, chunk_path))
+                    per_path_pending_counts[path] += 1
 
             raw_results: list[Any] = []
             total_transcribe_time = 0.0
@@ -182,7 +187,20 @@ class SegmentTranscriber:
 
         for path, output in outputs.items():
             transcribed = transcribed_by_path.get(path, {})
+            pending_count = per_path_pending_counts.get(path, 0)
+            allocated_transcribe = 0.0
+            if pending and pending_count:
+                allocated_transcribe = total_transcribe_time * (pending_count / len(pending))
             self._write_transcript(output, transcribed)
+            self._write_metrics(
+                output,
+                {
+                    "extract_seconds": per_path_extract_seconds.get(path, 0.0),
+                    "transcribe_seconds": allocated_transcribe,
+                    "segments_attempted": pending_count,
+                    "segments_transcribed": len(transcribed),
+                },
+            )
 
         return outputs
 
@@ -277,6 +295,15 @@ class SegmentTranscriber:
             )
 
         self._write_transcript(output, transcribed)
+        self._write_metrics(
+            output,
+            {
+                "extract_seconds": total_extract_time,
+                "transcribe_seconds": total_transcribe_time,
+                "segments_attempted": len(chunk_indexes),
+                "segments_transcribed": len(transcribed),
+            },
+        )
         return output
 
     @staticmethod
@@ -340,3 +367,13 @@ class SegmentTranscriber:
         with self.failure_log_path.open("a", encoding="utf-8") as log_out:
             log_out.write(json.dumps(entry, ensure_ascii=False))
             log_out.write("\n")
+
+    @staticmethod
+    def _metrics_path(output: Path) -> Path:
+        return output.with_suffix(".metrics.json")
+
+    @classmethod
+    def _write_metrics(cls, output: Path, payload: dict) -> None:
+        metrics_path = cls._metrics_path(output)
+        with metrics_path.open("w", encoding="utf-8") as metrics_out:
+            json.dump(payload, metrics_out)
