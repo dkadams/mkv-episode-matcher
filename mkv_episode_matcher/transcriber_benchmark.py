@@ -21,7 +21,6 @@ from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.indexed_episode_matcher import (
     IndexedEpisodeMatcher,
     VideoInfo,
-    chunked,
 )
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
@@ -276,11 +275,12 @@ def _transcribe_segments(
         series,
     )
     try:
+        jobs = sorted(jobs, key=lambda item: len(item[1]), reverse=True)
         with executor as transcribers:
             futures = {}
-            for chunk in chunked(jobs, 3):
-                future = transcribers.submit(_extract_text_segments_worker, chunk)
-                futures[future] = [path for path, _ in chunk]
+            for job in jobs:
+                future = transcribers.submit(_extract_text_segments_worker, [job])
+                futures[future] = [job[0]]
 
             transcribed: dict[Path, Path] = {}
             errors: list[str] = []

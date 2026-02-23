@@ -1,9 +1,9 @@
 import dataclasses
 from dataclasses import asdict, replace
 import json
-import json
 import math
 import multiprocessing
+import os
 import random
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, \
@@ -228,38 +228,91 @@ class IndexedEpisodeMatcher:
                                                    total=len(segments_to_transcribe))
 
         transcriber_type = self.config.args.transcriber
-        # If the transcriber is a subprocess, we don't get any benefit from
-        # spawning a separate python process for it.
-        if issubclass(transcriber_type, SubprocessTranscriber):
-            executor = ThreadPoolExecutor(
-                max_workers=10,
-                initializer=_init_transcription_worker,
-                initargs=(self.config, self.series, transcriber_type,
-                          self.text_extractor_model, misalignment_policy,
-                          variant_id, transcription_output_dir))
-        else:
-            ctx = multiprocessing.get_context("spawn")
-            executor = ProcessPoolExecutor(
-                max_workers=4,
-                initializer=_init_transcription_worker,
-                initargs=(self.config, self.series, transcriber_type,
-                          self.text_extractor_model, misalignment_policy,
-                          variant_id, transcription_output_dir),
-                mp_context=ctx)
-
-        with executor as transcribers:
-            chunks = chunked(segments_to_transcribe.items(), 3)
-            futures = (transcribers.submit(_extract_text_segments_worker,
-                                           chunk) for chunk in chunks)
+        jobs = self._build_transcription_jobs(segments_to_transcribe)
+        with self._transcription_executor(
+            transcriber_type,
+            misalignment_policy,
+            variant_id,
+            transcription_output_dir,
+            job_count=len(jobs),
+        ) as transcribers:
+            futures = {
+                transcribers.submit(_extract_text_segments_worker, [job]): job[0]
+                for job in jobs
+            }
 
             transcribed = {}
             for future in as_completed(futures):
-                result = future.result()
+                path = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(f"Transcription worker failed for {path}: {exc}")
+                    progress.update(transcription_progress, advance=1)
+                    continue
                 transcribed.update(result)
-                progress.update(transcription_progress, advance=len(result))
+                progress.update(transcription_progress, advance=1)
 
         progress.remove_task(transcription_progress)
         return video_info_by_path, cached_transcripts | transcribed
+
+    @staticmethod
+    def _build_transcription_jobs(
+        segments_to_transcribe: dict[Path, list[int]]
+    ) -> list[tuple[Path, list[int]]]:
+        # Schedule largest segment sets first to reduce long-tail idle time.
+        return sorted(
+            segments_to_transcribe.items(),
+            key=lambda item: len(item[1]),
+            reverse=True,
+        )
+
+    def _transcription_executor(
+        self,
+        transcriber_type: type,
+        misalignment_policy: Optional[MisalignmentPolicy],
+        variant_id: Optional[str],
+        transcription_output_dir: Optional[Path],
+        job_count: int,
+    ):
+        workers = self._transcription_worker_count(
+            transcriber_type=transcriber_type,
+            job_count=job_count,
+        )
+        initargs = (
+            self.config,
+            self.series,
+            transcriber_type,
+            self.text_extractor_model,
+            misalignment_policy,
+            variant_id,
+            transcription_output_dir,
+        )
+
+        # Subprocess-based transcribers already fan out to separate binaries.
+        if issubclass(transcriber_type, SubprocessTranscriber):
+            return ThreadPoolExecutor(
+                max_workers=workers,
+                initializer=_init_transcription_worker,
+                initargs=initargs,
+            )
+
+        ctx = multiprocessing.get_context("spawn")
+        return ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_init_transcription_worker,
+            initargs=initargs,
+            mp_context=ctx,
+        )
+
+    @staticmethod
+    def _transcription_worker_count(transcriber_type: type, job_count: int) -> int:
+        cpu_count = multiprocessing.cpu_count() or 1
+        if issubclass(transcriber_type, SubprocessTranscriber):
+            configured = int(os.environ.get("MEM_THREAD_WORKERS", "4"))
+        else:
+            configured = int(os.environ.get("MEM_PROCESS_WORKERS", "4"))
+        return max(1, min(job_count or 1, configured, cpu_count))
 
     def get_segment_selection(self, video_infos: Iterable[VideoInfo]) -> list[int]:
         """
