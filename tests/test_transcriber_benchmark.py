@@ -15,12 +15,10 @@ from mkv_episode_matcher.transcriber_benchmark import (
     _benchmark_group,
     _build_ephemeral_series,
     _get_segment_indexes,
-    _make_executor,
+    _transcribe_segments,
     benchmark_transcribers,
 )
 from mkv_episode_matcher.transcribers import (
-    SubprocessTranscriber,
-    WhisperTranscriber,
     WhispercppCliTranscriber,
 )
 
@@ -39,9 +37,18 @@ def test_benchmark_parser_defaults():
     assert args.segments_per_minute == 0.5
     assert args.segment_duration is None
     assert args.random_seed is None
-    assert args.thread_workers == 10
-    assert args.process_workers == 8
+    assert args.transcribe_workers == 4
+    assert args.io_workers == 2
     assert args.backend is None
+
+
+def test_benchmark_parser_accepts_xscribe_workers_alias():
+    parser = build_args_parser()
+    args = parser.parse_args(
+        ["benchmark-transcribers", "video.mkv", "--xscribe-workers", "7", "--io-workers", "3"]
+    )
+    assert args.transcribe_workers == 7
+    assert args.io_workers == 3
 
 
 def test_benchmark_parser_backend_filter():
@@ -238,55 +245,47 @@ def test_segment_selection_is_deterministic():
     assert first == second
 
 
-def test_make_executor_uses_threads_for_subprocess(monkeypatch):
-    seen = {}
-
-    class DummyThreadExecutor:
-        def __init__(self, **kwargs):
-            seen["thread"] = kwargs
-
-    class DummyProcessExecutor:
-        def __init__(self, **kwargs):
-            seen["process"] = kwargs
-
-    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.ThreadPoolExecutor", DummyThreadExecutor)
-    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.ProcessPoolExecutor", DummyProcessExecutor)
-
-    args = Namespace(segments_per_minute=0.5, thread_workers=1, process_workers=1)
+def test_transcribe_segments_uses_pipeline_runner(monkeypatch, tmp_path):
+    args = Namespace(segments_per_minute=0.5, transcribe_workers=2, io_workers=1)
     config = Configuration(args=args, stored=ConfigParser())
     series = Series(Path("/tmp/s"), {"name": "s"}, "s", 30, 1)
+    video = tmp_path / "ep.mkv"
 
-    _make_executor(WhispercppCliTranscriber, 3, 2, config, series)
-    assert "thread" in seen
-    assert "process" not in seen
-
-
-def test_make_executor_uses_process_for_python_transcriber(monkeypatch):
     seen = {}
 
-    class DummyThreadExecutor:
-        def __init__(self, **kwargs):
-            seen["thread"] = kwargs
+    class DummyRunner:
+        def __init__(self, *args, **kwargs):
+            seen["args"] = args
+            seen["kwargs"] = kwargs
 
-    class DummyProcessExecutor:
-        def __init__(self, **kwargs):
-            seen["process"] = kwargs
+        def run(self, segments_to_transcribe):
+            seen["segments"] = segments_to_transcribe
+            output = series.transcription_file(video)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text('{"0":"ok"}', encoding="utf-8")
+            output.with_suffix(".metrics.json").write_text(
+                '{"extract_seconds": 1.0, "transcribe_seconds": 2.0}',
+                encoding="utf-8",
+            )
+            return type(
+                "DummyResult",
+                (),
+                {"outputs": {video: output}, "failures": []},
+            )()
 
-    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.ThreadPoolExecutor", DummyThreadExecutor)
-    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.ProcessPoolExecutor", DummyProcessExecutor)
-    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.multiprocessing.get_context", lambda _name: "ctx")
+        def write_outputs(self, run_result):
+            return run_result.outputs
 
-    args = Namespace(segments_per_minute=0.5, thread_workers=1, process_workers=1)
-    config = Configuration(args=args, stored=ConfigParser())
-    series = Series(Path("/tmp/s"), {"name": "s"}, "s", 30, 1)
-
-    class NonSubprocessTranscriber(WhisperTranscriber):
-        pass
-
-    assert not issubclass(NonSubprocessTranscriber, SubprocessTranscriber)
-    _make_executor(NonSubprocessTranscriber, 3, 2, config, series)
-    assert "process" in seen
-    assert "thread" not in seen
+    monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark.PipelineRunner", DummyRunner)
+    outputs, errors = _transcribe_segments(
+        config=config,
+        series=series,
+        transcriber_type=WhispercppCliTranscriber,
+        segments_to_transcribe={video: [0, 1]},
+    )
+    assert errors == []
+    assert video in outputs
+    assert seen["segments"] == {video: [0, 1]}
 
 
 def test_benchmark_group_aggregates_extract_and_transcribe_metrics(monkeypatch, tmp_path):

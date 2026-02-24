@@ -3,11 +3,10 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
-import multiprocessing
 import tempfile
 import time
 from argparse import Namespace
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,19 +21,15 @@ from mkv_episode_matcher.indexed_episode_matcher import (
     IndexedEpisodeMatcher,
     VideoInfo,
 )
+from mkv_episode_matcher.pipeline_runner import PipelineRunner
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
     FasterWhisperTranscriber,
     ParakeetMlxCliTranscriber,
     ParakeetMlxGenerateBatchTranscriber,
-    SubprocessTranscriber,
     WhispercppCliTranscriber,
     WhisperKitCliTranscriber,
     WhisperTranscriber,
-)
-from mkv_episode_matcher.transcription_worker import (
-    _extract_text_segments_worker,
-    _init_transcription_worker,
 )
 from mkv_episode_matcher.video_helper import get_video_duration_seconds
 
@@ -263,59 +258,28 @@ def _transcribe_segments(
     transcriber_type: type,
     segments_to_transcribe: dict[Path, list[int]],
 ) -> tuple[dict[Path, Path], list[str]]:
-    jobs = list(segments_to_transcribe.items())
-    if not jobs:
+    if not segments_to_transcribe:
         return {}, []
 
-    executor = _make_executor(
-        transcriber_type,
-        config.args.thread_workers,
-        config.args.process_workers,
-        config,
-        series,
+    runner = PipelineRunner(
+        config=config,
+        series=series,
+        transcriber_type=transcriber_type,
+        model_name=DEFAULT_TEXT_EXTRACTOR_MODEL,
+        output_dir=series.ensure_transcription_text_dir(),
     )
-    try:
-        jobs = sorted(jobs, key=lambda item: len(item[1]), reverse=True)
-        with executor as transcribers:
-            futures = {}
-            for job in jobs:
-                future = transcribers.submit(_extract_text_segments_worker, [job])
-                futures[future] = [job[0]]
-
-            transcribed: dict[Path, Path] = {}
-            errors: list[str] = []
-            for future in as_completed(futures):
-                try:
-                    transcribed.update(future.result())
-                except Exception as exc:  # noqa: BLE001
-                    for path in futures[future]:
-                        errors.append(f"{path}: worker failed ({exc})")
-            return transcribed, errors
-    finally:
-        logger.debug(f"Completed transcription run for {transcriber_type.__name__}")
-
-
-def _make_executor(
-    transcriber_type: type,
-    thread_workers: int,
-    process_workers: int,
-    config: Configuration,
-    series: Series,
-):
-    if issubclass(transcriber_type, SubprocessTranscriber):
-        return ThreadPoolExecutor(
-            max_workers=thread_workers,
-            initializer=_init_transcription_worker,
-            initargs=(config, series, transcriber_type, DEFAULT_TEXT_EXTRACTOR_MODEL),
-        )
-
-    ctx = multiprocessing.get_context("spawn")
-    return ProcessPoolExecutor(
-        max_workers=process_workers,
-        initializer=_init_transcription_worker,
-        initargs=(config, series, transcriber_type, DEFAULT_TEXT_EXTRACTOR_MODEL),
-        mp_context=ctx,
-    )
+    pipeline_result = runner.run(segments_to_transcribe)
+    outputs = runner.write_outputs(pipeline_result)
+    errors: list[str] = []
+    for failure in pipeline_result.failures:
+        video_path = failure.get("video_path")
+        failure_type = failure.get("failure_type", "unknown_failure")
+        if video_path:
+            errors.append(f"{video_path}: {failure_type}")
+        else:
+            errors.append(failure_type)
+    logger.debug(f"Completed transcription run for {transcriber_type.__name__}")
+    return outputs, errors
 
 
 def _build_benchmark_args(config: Configuration, transcriber_type: type) -> Namespace:

@@ -11,10 +11,11 @@ from mkv_episode_matcher.utils import unique_filename
 
 
 class AudioChunkExtractor(ContextManager):
-    def __init__(self):
+    def __init__(self, manage_lifecycle: bool = True):
         self.temp_dir = Path(tempfile.gettempdir()) / "mkv-episode-matcher-audio-chunks"
         self.temp_dir.mkdir(exist_ok=True)
 
+        self.manage_lifecycle = manage_lifecycle
         self.audio_chunks = set()
 
     @staticmethod
@@ -72,11 +73,14 @@ class AudioChunkExtractor(ContextManager):
                 raise RuntimeError(
                     f"Failed to commit extracted chunk atomically: {chunk_path}: {exc}"
                 ) from exc
-            self.audio_chunks.add(chunk_path)
+            if self.manage_lifecycle:
+                self.audio_chunks.add(chunk_path)
 
         return chunk_path
 
     def __exit__(self, exc_type, exc_value, traceback, /):
+        if not self.manage_lifecycle:
+            return
         for chunk in self.audio_chunks:
             try:
                 chunk.unlink(missing_ok=True)

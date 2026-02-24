@@ -360,6 +360,21 @@ def add_match(subparsers, config_parser, index_parser):
                               type=int,
                               default=5,
                               help="Number of matches to show (default: 5)")
+    match_parser.add_argument(
+        "--transcribe-workers",
+        "--xscribe-workers",
+        dest="transcribe_workers",
+        type=int,
+        default=4,
+        help="Worker count for transcription jobs (default: 4)",
+    )
+    match_parser.add_argument(
+        "--io-workers",
+        dest="io_workers",
+        type=int,
+        default=2,
+        help="Worker count for audio extraction I/O stage (default: 2)",
+    )
 
     xscriber_group = match_parser.add_mutually_exclusive_group()
     xscriber_group.add_argument(
@@ -430,16 +445,19 @@ def add_benchmark_transcribers(subparsers, config_parser):
         help="Override random seed (default: series setting or 12345)",
     )
     parser.add_argument(
-        "--thread-workers",
+        "--transcribe-workers",
+        "--xscribe-workers",
+        dest="transcribe_workers",
         type=int,
-        default=10,
-        help="Thread worker count for subprocess backends (default: 10)",
+        default=4,
+        help="Worker count for transcription jobs (default: 4)",
     )
     parser.add_argument(
-        "--process-workers",
+        "--io-workers",
+        dest="io_workers",
         type=int,
-        default=8,
-        help="Process worker count for Python model backends (default: 8)",
+        default=2,
+        help="Worker count for audio extraction I/O stage (default: 2)",
     )
     parser.add_argument(
         "--backend",
