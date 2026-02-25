@@ -7,7 +7,7 @@ from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.pipeline_runner import PipelineRunner
 from mkv_episode_matcher.pipeline_types import TranscriptionResultEvent
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.transcribers import WhispercppCliTranscriber
+from mkv_episode_matcher.transcribers import WhispercppTranscriber
 
 
 def _config(io_workers: int = 1, transcribe_workers: int = 1) -> Configuration:
@@ -58,7 +58,7 @@ def test_pipeline_runner_sorts_extracts_and_preserves_segment_indexes(monkeypatc
     runner = PipelineRunner(
         config=_config(),
         series=series,
-        transcriber_type=WhispercppCliTranscriber,
+        transcriber_type=WhispercppTranscriber,
         model_name="unused",
         output_dir=series.ensure_transcription_text_dir(),
     )
@@ -106,7 +106,7 @@ def test_pipeline_runner_records_extract_failures(monkeypatch, tmp_path):
     runner = PipelineRunner(
         config=_config(),
         series=series,
-        transcriber_type=WhispercppCliTranscriber,
+        transcriber_type=WhispercppTranscriber,
         model_name="unused",
         output_dir=series.ensure_transcription_text_dir(),
     )

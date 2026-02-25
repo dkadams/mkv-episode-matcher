@@ -31,12 +31,10 @@ dependencies = [
     "chardet>=5.2.0",
     "chromadb>=1.1.0",
     "configparser>=7.1.0",
-    "faster-whisper>=1.2.0",
     "ffmpeg>=1.4",
     "guessit>=3.8.0",
     "hnswlib>=0.8.0",
     "loguru>=0.7.2",
-    "openai-whisper>=20240930",
     "opensubtitlescom>=0.1.5",
     "pysubs2>=1.8.0",
     "rapidfuzz>=3.10.1",
@@ -44,9 +42,6 @@ dependencies = [
     "rich[jupyter]>=13.9.4",
     "sentence-transformers>=5.1.2",
     "tmdb-client>=0.0.1",
-    "torch>=2.5.1",
-    "torchaudio>=2.5.1",
-    "torchvision>=0.20.1",
     "parakeet-mlx @ git+https://github.com/dkadams/parakeet-mlx.git@21056ef0141ceaff729d20502537f7d7c57ff9f9 ; python_full_version >= '3.10' and sys_platform == 'darwin'",
 ]
 [project.urls]
@@ -125,4 +120,3 @@ pythonpath = ["."]
 addopts = "-ra -q --cov=mkv_episode_matcher --cov-report=term-missing"
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-

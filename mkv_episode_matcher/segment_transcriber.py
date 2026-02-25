@@ -348,7 +348,7 @@ class SegmentTranscriber:
     @staticmethod
     def _extract_text(payload: dict) -> str | None:
         """
-        Reduce the structured whisperkit-cli payload to raw text.
+        Reduce structured transcript payloads to raw text.
 
         Prefers segmented transcripts when available; falls back to the top-level
         plain text field.

@@ -19,7 +19,7 @@ from mkv_episode_matcher.transcriber_benchmark import (
     benchmark_transcribers,
 )
 from mkv_episode_matcher.transcribers import (
-    WhispercppCliTranscriber,
+    WhispercppTranscriber,
 )
 
 
@@ -58,25 +58,38 @@ def test_benchmark_parser_backend_filter():
             "benchmark-transcribers",
             "video.mkv",
             "--backend",
-            "whispercpp-cli",
+            "whispercpp",
             "--backend",
             "parakeet-mlx",
         ]
     )
-    assert args.backend == ["whispercpp-cli", "parakeet-mlx"]
+    assert args.backend == ["whispercpp", "parakeet-mlx"]
 
 
-def test_benchmark_parser_accepts_parakeet_batch_backend():
+def test_benchmark_parser_accepts_parakeet_backend():
     parser = build_args_parser()
     args = parser.parse_args(
         [
             "benchmark-transcribers",
             "video.mkv",
             "--backend",
-            "parakeet-mlx-batch",
+            "parakeet-mlx",
         ]
     )
-    assert args.backend == ["parakeet-mlx-batch"]
+    assert args.backend == ["parakeet-mlx"]
+
+
+def test_benchmark_parser_rejects_removed_backend():
+    parser = build_args_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            [
+                "benchmark-transcribers",
+                "video.mkv",
+                "--backend",
+                "whispercpp-cli",
+            ]
+        )
 
 
 def test_benchmark_uses_all_backends_by_default(monkeypatch, tmp_path):
@@ -124,9 +137,9 @@ def test_benchmark_continues_after_backend_failure(monkeypatch, tmp_path):
             "benchmark-transcribers",
             str(tmp_path / "in"),
             "--backend",
-            "whisper",
+            "parakeet-mlx",
             "--backend",
-            "whispercpp-cli",
+            "whispercpp",
         ]
     )
     config = _config_from_args(args)
@@ -153,7 +166,7 @@ def test_benchmark_continues_after_backend_failure(monkeypatch, tmp_path):
     monkeypatch.setattr("mkv_episode_matcher.transcriber_benchmark._display_results", lambda _results: None)
 
     def fake_run_backend(_config, backend_name, _groups):
-        if backend_name == "whisper":
+        if backend_name == "parakeet-mlx":
             return BenchmarkResult(
                 backend=backend_name,
                 files_attempted=1,
@@ -170,7 +183,7 @@ def test_benchmark_continues_after_backend_failure(monkeypatch, tmp_path):
 def test_benchmark_raises_when_all_backends_fail(monkeypatch, tmp_path):
     parser = build_args_parser()
     args = parser.parse_args(
-        ["benchmark-transcribers", str(tmp_path / "in"), "--backend", "whisper"]
+        ["benchmark-transcribers", str(tmp_path / "in"), "--backend", "whispercpp"]
     )
     config = _config_from_args(args)
 
@@ -280,7 +293,7 @@ def test_transcribe_segments_uses_pipeline_runner(monkeypatch, tmp_path):
     outputs, errors = _transcribe_segments(
         config=config,
         series=series,
-        transcriber_type=WhispercppCliTranscriber,
+        transcriber_type=WhispercppTranscriber,
         segments_to_transcribe={video: [0, 1]},
     )
     assert errors == []
@@ -338,7 +351,7 @@ def test_benchmark_group_aggregates_extract_and_transcribe_metrics(monkeypatch, 
         fake_transcribe_segments,
     )
 
-    result = _benchmark_group(config, WhispercppCliTranscriber, group, tmp_path / "bench-root")
+    result = _benchmark_group(config, WhispercppTranscriber, group, tmp_path / "bench-root")
     assert result.files_succeeded == 1
     assert result.transcribed_segments == 1
     assert result.extract_seconds == 3.5

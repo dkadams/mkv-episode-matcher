@@ -24,12 +24,8 @@ from mkv_episode_matcher.indexed_episode_matcher import (
 from mkv_episode_matcher.pipeline_runner import PipelineRunner
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
-    FasterWhisperTranscriber,
-    ParakeetMlxCliTranscriber,
-    ParakeetMlxGenerateBatchTranscriber,
-    WhispercppCliTranscriber,
-    WhisperKitCliTranscriber,
-    WhisperTranscriber,
+    ParakeetMlxTranscriber,
+    WhispercppTranscriber,
 )
 from mkv_episode_matcher.video_helper import get_video_duration_seconds
 
@@ -40,12 +36,8 @@ DEFAULT_RANDOM_SEED = 12345
 DEFAULT_TEXT_EXTRACTOR_MODEL = "small.en"
 
 BENCHMARK_BACKENDS: dict[str, type] = {
-    "whisper": WhisperTranscriber,
-    "faster-whisper": FasterWhisperTranscriber,
-    "whispercpp-cli": WhispercppCliTranscriber,
-    "whisperkit-cli": WhisperKitCliTranscriber,
-    "parakeet-mlx": ParakeetMlxCliTranscriber,
-    "parakeet-mlx-batch": ParakeetMlxGenerateBatchTranscriber,
+    "whispercpp": WhispercppTranscriber,
+    "parakeet-mlx": ParakeetMlxTranscriber,
 }
 BENCHMARK_BACKEND_CHOICES = tuple(BENCHMARK_BACKENDS.keys())
 

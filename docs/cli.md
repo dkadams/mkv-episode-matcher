@@ -91,14 +91,14 @@ Options:
 - `--no-transcription-cache`: Disable reusing cached transcriptions
 - `--display-by-episode`, `-E`: Show results grouped by episode (default)
 - `--display-by-file`, `-F`: Show results grouped by file
-- `--whisper`, `--faster-whisper`, `--whispercpp-cli`, `--whisperkit-cli`, `--parakeet-mlx`: Transcriber backend (default: parakeet-mlx)
+- `--whispercpp`, `--parakeet-mlx`: Transcriber backend (default: `parakeet-mlx` on macOS, `whispercpp` on other platforms). `parakeet-mlx` is macOS-only.
 
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.
 
 ```bash
 mkv-episode-matcher benchmark-transcribers /path/to/videos
-mkv-episode-matcher benchmark-transcribers /path/to/videos --backend whispercpp-cli --backend parakeet-mlx
+mkv-episode-matcher benchmark-transcribers /path/to/videos --backend whispercpp --backend parakeet-mlx
 ```
 
 Options:
@@ -109,7 +109,7 @@ Options:
 - `--random-seed`: Override random seed for deterministic segment selection (default: series value or `12345`)
 - `--thread-workers`: Thread pool size for subprocess backends (default: `10`)
 - `--process-workers`: Process pool size for Python model backends (default: `8`)
-- `--backend`: Repeatable backend filter (`whisper`, `faster-whisper`, `whispercpp-cli`, `whisperkit-cli`, `parakeet-mlx`)
+- `--backend`: Repeatable backend filter (`whispercpp`, `parakeet-mlx`)
 
 Notes:
 

@@ -25,7 +25,7 @@ from mkv_episode_matcher.pipeline_types import (
 )
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
-    ParakeetMlxGenerateBatchTranscriber,
+    ParakeetMlxTranscriber,
     SubprocessTranscriber,
 )
 from mkv_episode_matcher.transcription_worker import (
@@ -321,7 +321,7 @@ class PipelineRunner:
             with pending_lock:
                 pending.add(future)
             # Optional feature gate for future SampleTask support path.
-            if self._samples_enabled() and issubclass(self.transcriber_type, ParakeetMlxGenerateBatchTranscriber):
+            if self._samples_enabled() and issubclass(self.transcriber_type, ParakeetMlxTranscriber):
                 logger.debug("Sample-task feature gate enabled, but chunk-path mode remains active")
 
             def _on_done(done: Future, submitted_task: ChunkTask = task) -> None:

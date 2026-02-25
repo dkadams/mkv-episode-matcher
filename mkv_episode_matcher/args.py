@@ -17,13 +17,18 @@ from mkv_episode_matcher.transcriber_benchmark import (
     benchmark_transcribers,
 )
 from mkv_episode_matcher.transcribers import (
-    WhisperTranscriber,
-    FasterWhisperTranscriber,
-    WhispercppCliTranscriber,
-    WhisperKitCliTranscriber,
-    ParakeetMlxCliTranscriber,
-    ParakeetMlxGenerateBatchTranscriber,
+    ParakeetMlxTranscriber,
+    WhispercppTranscriber,
+    get_default_transcriber_name,
+    get_default_transcriber_type,
 )
+
+
+class NoAbbrevArgumentParser(argparse.ArgumentParser):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(*args, **kwargs)
+
 
 def build_args_parser():
     parser = get_root_parser()
@@ -34,7 +39,10 @@ def build_args_parser():
     episode_parser = get_episode_parser()
     index_parser = get_index_parser()
 
-    subparsers = parser.add_subparsers(required=True)
+    subparsers = parser.add_subparsers(
+        required=True,
+        parser_class=NoAbbrevArgumentParser,
+    )
 
     add_config_parser(subparsers, config_parser)
     add_init_series(subparsers, config_parser, series_dir_parser)
@@ -77,7 +85,7 @@ def build_args_parser():
 
 def get_root_parser() -> argparse.ArgumentParser:
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(
+    parser = NoAbbrevArgumentParser(
         description="Automatically match and rename your MKV TV episodes",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
@@ -163,6 +171,7 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
 
 def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_parser,
     index_parser):
+    default_backend = get_default_transcriber_name()
     collect_parser = subparsers.add_parser(
         "collect-dataset",
         parents=[config_parser, series_dir_parser, episode_parser, index_parser],
@@ -239,33 +248,23 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
 
     xscriber_group = collect_parser.add_mutually_exclusive_group()
     xscriber_group.add_argument(
-        "--whisper", dest="transcriber",
-        action="store_const", const=WhisperTranscriber,
-        help="Use Whisper for transcription.")
+        "--whispercpp",
+        dest="transcriber",
+        action="store_const",
+        const=WhispercppTranscriber,
+        help=f"Use whisper.cpp CLI for transcription (default on this platform: {default_backend}).",
+    )
     xscriber_group.add_argument(
-        "--faster-whisper", dest="transcriber",
-        action="store_const", const=FasterWhisperTranscriber,
-        help="Use Faster Whisper for transcription.")
-    xscriber_group.add_argument(
-        "--whispercpp-cli", dest="transcriber",
-        action="store_const", const=WhispercppCliTranscriber,
-        help="Use whisper.cpp's CLI for transcription.")
-    xscriber_group.add_argument(
-        "--whisperkit-cli", dest="transcriber",
-        action="store_const", const=WhisperKitCliTranscriber,
-        help="Use WhisperKit's CLI for transcription.")
-    xscriber_group.add_argument(
-        "--parakeet-mlx", dest="transcriber",
-        action="store_const", const=ParakeetMlxCliTranscriber,
-        help="Use parakeet-mlx for transcription.")
-    xscriber_group.add_argument(
-        "--parakeet-mlx-batch", dest="transcriber",
-        action="store_const", const=ParakeetMlxGenerateBatchTranscriber,
-        help="Use parakeet-mlx model.generate batching for transcription.")
+        "--parakeet-mlx",
+        dest="transcriber",
+        action="store_const",
+        const=ParakeetMlxTranscriber,
+        help=f"Use parakeet-mlx for transcription (macOS only; default on this platform: {default_backend}).",
+    )
 
     collect_parser.set_defaults(
         func=collect_dataset,
-        transcriber=ParakeetMlxGenerateBatchTranscriber,
+        transcriber=get_default_transcriber_type(),
     )
 
 def add_evaluate_dataset(subparsers, config_parser):
@@ -325,6 +324,7 @@ def add_evaluate_dataset(subparsers, config_parser):
 
 
 def add_match(subparsers, config_parser, index_parser):
+    default_backend = get_default_transcriber_name()
     match_parser = subparsers.add_parser("match",
                                          parents=[config_parser, index_parser],
                                          help="Match episodes of a series")
@@ -378,33 +378,23 @@ def add_match(subparsers, config_parser, index_parser):
 
     xscriber_group = match_parser.add_mutually_exclusive_group()
     xscriber_group.add_argument(
-        "--whisper", dest="transcriber",
-        action="store_const", const=WhisperTranscriber,
-        help="Use Whisper for transcription.")
+        "--whispercpp",
+        dest="transcriber",
+        action="store_const",
+        const=WhispercppTranscriber,
+        help=f"Use whisper.cpp CLI for transcription (default on this platform: {default_backend}).",
+    )
     xscriber_group.add_argument(
-        "--faster-whisper", dest="transcriber",
-        action="store_const", const=FasterWhisperTranscriber,
-        help="Use Faster Whisper for transcription.")
-    xscriber_group.add_argument(
-        "--whispercpp-cli", dest="transcriber",
-        action="store_const", const=WhispercppCliTranscriber,
-        help="Use whisper.cpp's CLI for transcription.")
-    xscriber_group.add_argument(
-        "--whisperkit-cli", dest="transcriber",
-        action="store_const", const=WhisperKitCliTranscriber,
-        help="Use WhisperKit's CLI for transcription.")
-    xscriber_group.add_argument(
-        "--parakeet-mlx", dest="transcriber",
-        action="store_const", const=ParakeetMlxCliTranscriber,
-        help="Use parakeet-mlx for transcription.")
-    xscriber_group.add_argument(
-        "--parakeet-mlx-batch", dest="transcriber",
-        action="store_const", const=ParakeetMlxGenerateBatchTranscriber,
-        help="Use parakeet-mlx model.generate batching for transcription.")
+        "--parakeet-mlx",
+        dest="transcriber",
+        action="store_const",
+        const=ParakeetMlxTranscriber,
+        help=f"Use parakeet-mlx for transcription (macOS only; default on this platform: {default_backend}).",
+    )
 
 
     match_parser.set_defaults(func=match_episodes,
-                              transcriber=ParakeetMlxGenerateBatchTranscriber,
+                              transcriber=get_default_transcriber_type(),
                               display_by_episode=True,)
 
 

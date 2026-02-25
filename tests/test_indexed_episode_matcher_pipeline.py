@@ -8,7 +8,7 @@ from rich.progress import Progress
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.indexed_episode_matcher import IndexedEpisodeMatcher
 from mkv_episode_matcher.series import Series
-from mkv_episode_matcher.transcribers import WhispercppCliTranscriber
+from mkv_episode_matcher.transcribers import WhispercppTranscriber
 
 
 def test_get_transcriptions_uses_pipeline_runner(monkeypatch, tmp_path):
@@ -19,7 +19,7 @@ def test_get_transcriptions_uses_pipeline_runner(monkeypatch, tmp_path):
         index_type=SimpleNamespace(reader_type=object),
         no_transcription_cache=True,
         segments_per_minute=0.5,
-        transcriber=WhispercppCliTranscriber,
+        transcriber=WhispercppTranscriber,
         transcribe_workers=2,
         io_workers=1,
     )

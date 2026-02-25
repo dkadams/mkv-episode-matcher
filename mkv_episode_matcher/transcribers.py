@@ -1,47 +1,29 @@
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
-import torch
-import whisper
-from faster_whisper import WhisperModel
 from loguru import logger
+
 
 class SubprocessTranscriber:
     """Marker base class for backends that run external CLI executables."""
 
-class WhisperTranscriber:
-    def __init__(self, model_name):
-        self.model = whisper.load_model(model_name)
 
-    def transcribe(self, audio_path):
-        fp16 = self.model.device != torch.device("cpu")
-        result = whisper.transcribe(self.model, str(audio_path), fp16=fp16)
-        return result["text"] if result else None
+class WhispercppTranscriber(SubprocessTranscriber):
+    """Thin wrapper around whisper.cpp's whisper-cli binary."""
 
-class FasterWhisperTranscriber:
-    def __init__(self, model_name):
-        self.model = WhisperModel(model_name)
-
-    def transcribe(self, audio_path):
-        logger.info(f"Transcribing {audio_path}")
-        segments, info = self.model.transcribe(str(audio_path))
-        text_segments = [segment.text for segment in segments]
-        return " ".join(text_segments)
-
-class WhispercppCliTranscriber(SubprocessTranscriber):
-    """Thin wrapper around whisper.cpp's whispercpp-cli binary."""
-
-    def __init__(self, model_name, executable="whisper-cli"):
+    def __init__(self, model_name: str, executable: str = "whisper-cli"):
         self.executable = executable
         self.model_path = self._resolve_model_path(Path(model_name).expanduser())
         if not Path(self.model_path).exists():
             logger.warning(
-                "whispercpp-cli model file '%s' does not exist; transcription will likely fail",
+                "whispercpp model file '%s' does not exist; transcription will likely fail",
                 self.model_path,
             )
 
@@ -68,7 +50,7 @@ class WhispercppCliTranscriber(SubprocessTranscriber):
             Path.home(),
             Path.home() / ".cache/whisper.cpp",
             Path.home() / ".cache/ggml",
-            ])
+        ])
 
         for candidate in candidates:
             if candidate.is_absolute():
@@ -86,7 +68,7 @@ class WhispercppCliTranscriber(SubprocessTranscriber):
         return str(fallback)
 
     def transcribe(self, audio_path: Path):
-        logger.info(f"Transcribing {audio_path} with whispercpp-cli")
+        logger.info(f"Transcribing {audio_path} with whispercpp")
         with tempfile.TemporaryDirectory() as tmpdir:
             output_base = Path(tmpdir) / "whispercpp_transcription"
             cmd = [
@@ -100,85 +82,64 @@ class WhispercppCliTranscriber(SubprocessTranscriber):
                 str(output_base),
             ]
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True,
-                                        check=False)
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             except FileNotFoundError:
-                logger.error(f"whispercpp-cli executable '{self.executable}' not found")
+                logger.error(f"whispercpp executable '{self.executable}' not found")
                 return None
 
             if result.returncode != 0:
-                logger.error(f"whispercpp-cli failed for {audio_path} "
-                             f"(exit {result.returncode}): {result.stderr.strip()}")
+                logger.error(
+                    f"whispercpp failed for {audio_path} "
+                    f"(exit {result.returncode}): {result.stderr.strip()}"
+                )
                 return None
 
             transcript_file = Path(f"{output_base}.txt")
             if not transcript_file.exists():
-                logger.error(f"whispercpp-cli did not produce expected transcript file {transcript_file}")
-                logger.error(f"whispercpp-cli output: {result.stdout.strip()}")
-                logger.error(f"whispercpp-cli error: {result.stderr.strip()}")
+                logger.error(
+                    f"whispercpp did not produce expected transcript file {transcript_file}"
+                )
+                logger.error(f"whispercpp output: {result.stdout.strip()}")
+                logger.error(f"whispercpp error: {result.stderr.strip()}")
                 return None
 
             text = transcript_file.read_text(encoding="utf-8").strip()
             return text or None
 
-class WhisperKitCliTranscriber(SubprocessTranscriber):
-    """Adapter for the Swift whisperkit-cli binary."""
 
-    def __init__(self, model_name: str, executable: str = "whisperkit-cli"):
-        self.executable = executable
-        self.model_arg = None
-        if model_name:
-            expanded = Path(model_name).expanduser()
-            if expanded.exists():
-                self.model_arg = ("--model-path", str(expanded))
-            else:
-                self.model_arg = ("--model", model_name)
-
-    def transcribe(self, audio_path: Path):
-        logger.info(f"Transcribing {audio_path} with whisperkit-cli")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            report_dir = Path(tmpdir)
-            logger.info(f"Writing report to {report_dir}")
-            cmd = [
-                self.executable,
-                "transcribe",
-                "--audio-path",
-                str(audio_path),
-                "--report",
-                "--report-path",
-                str(report_dir),
-                "--without-timestamps",
-            ]
-            if self.model_arg:
-                cmd.extend(self.model_arg)
-
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            except FileNotFoundError:
-                logger.error(f"whisperkit-cli executable '{self.executable}' not found")
-                return None
-
-            if result.returncode != 0:
-                stderr = result.stderr.strip()
-                logger.error(f"whisperkit-cli failed for {audio_path} (exit {result.returncode}): {stderr}")
-                return None
-
-            return result.stdout.strip()
+PARAKEET_MLX_UNSUPPORTED_MESSAGE = (
+    "parakeet-mlx is only supported on macOS and requires optional dependencies "
+    "(mlx, parakeet-mlx)."
+)
 
 
-class ParakeetMlxCliTranscriber:
-    """Python adapter for parakeet-mlx."""
+def is_parakeet_mlx_supported() -> tuple[bool, str | None]:
+    if sys.platform != "darwin":
+        return False, PARAKEET_MLX_UNSUPPORTED_MESSAGE
+
+    if importlib.util.find_spec("mlx") is None or importlib.util.find_spec("parakeet_mlx") is None:
+        return False, PARAKEET_MLX_UNSUPPORTED_MESSAGE
+
+    return True, None
+
+
+class ParakeetMlxTranscriber:
+    """Batch adapter for parakeet-mlx using model.generate()."""
 
     DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 
     def __init__(self, model_name: str | None):
+        supported, reason = is_parakeet_mlx_supported()
+        if not supported:
+            raise RuntimeError(reason)
+
         self.model_name = self._resolve_model_name(model_name)
-        self.chunk_duration = float(os.environ.get("PARAKEET_CHUNK_DURATION", "120"))
-        self.overlap_duration = float(os.environ.get("PARAKEET_OVERLAP_DURATION", "15"))
         self.cache_dir = os.environ.get("PARAKEET_CACHE_DIR")
         self.fp32 = self._is_truthy(os.environ.get("PARAKEET_FP32"))
         self.local_attention = self._is_truthy(os.environ.get("PARAKEET_LOCAL_ATTENTION"))
-        self.local_attention_context_size = int(os.environ.get("PARAKEET_LOCAL_ATTENTION_CTX", "256"))
+        self.local_attention_context_size = int(
+            os.environ.get("PARAKEET_LOCAL_ATTENTION_CTX", "256")
+        )
         self.model = self._load_model(
             self.model_name,
             fp32=self.fp32,
@@ -186,6 +147,9 @@ class ParakeetMlxCliTranscriber:
             local_attention=self.local_attention,
             local_attention_context_size=self.local_attention_context_size,
         )
+        self.batch_size = max(1, int(os.environ.get("PARAKEET_MLX_BATCH_SIZE", "8")))
+        self.batch_debug = self._is_truthy(os.environ.get("PARAKEET_MLX_BATCH_DEBUG"))
+        self._batch_counter = 0
 
     @classmethod
     def _resolve_model_name(cls, model_name: str | None) -> str:
@@ -229,33 +193,6 @@ class ParakeetMlxCliTranscriber:
                 (local_attention_context_size, local_attention_context_size),
             )
         return loaded
-
-    def transcribe(self, audio_path: Path):
-        logger.info(f"Transcribing {audio_path} with parakeet-mlx (python)")
-        try:
-            result = self.model.transcribe(
-                str(audio_path),
-                chunk_duration=self.chunk_duration if self.chunk_duration > 0 else None,
-                overlap_duration=self.overlap_duration,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.error(f"parakeet-mlx failed for {audio_path}: {exc}")
-            return None
-
-        text = getattr(result, "text", None)
-        return str(text).strip() if text else None
-
-
-class ParakeetMlxGenerateBatchTranscriber(ParakeetMlxCliTranscriber):
-    """Batch adapter for parakeet-mlx using model.generate()."""
-
-    def __init__(self, model_name: str | None):
-        super().__init__(model_name)
-        self.batch_size = max(
-            1, int(os.environ.get("PARAKEET_MLX_BATCH_SIZE", "8"))
-        )
-        self.batch_debug = self._is_truthy(os.environ.get("PARAKEET_MLX_BATCH_DEBUG"))
-        self._batch_counter = 0
 
     def transcribe(self, audio_path: Path):
         result = self.transcribe_many([audio_path])
@@ -357,4 +294,18 @@ class ParakeetMlxGenerateBatchTranscriber(ParakeetMlxCliTranscriber):
     def _debug_batch(self, phase: str, payload: dict) -> None:
         if not self.batch_debug:
             return
-        logger.info("parakeet-mlx-batch debug [{}] {}", phase, payload)
+        logger.info("parakeet-mlx debug [{}] {}", phase, payload)
+
+
+def get_default_transcriber_type() -> type:
+    if sys.platform == "darwin":
+        return ParakeetMlxTranscriber
+    return WhispercppTranscriber
+
+
+def get_default_transcriber_name() -> str:
+    return (
+        "parakeet-mlx"
+        if get_default_transcriber_type() is ParakeetMlxTranscriber
+        else "whispercpp"
+    )
