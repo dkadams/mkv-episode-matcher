@@ -61,6 +61,7 @@ nav:
   - API Reference: api/index.md
   - Advanced Usage:
       - Command Line Interface: cli.md
+      - Docker: docker.md
       - Tips and Tricks: tips.md
       - Data Directory: data-directory.md
 

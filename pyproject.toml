@@ -35,6 +35,7 @@ dependencies = [
     "guessit>=3.8.0",
     "hnswlib>=0.8.0",
     "loguru>=0.7.2",
+    "more-itertools>=10.0.0",
     "opensubtitlescom>=0.1.5",
     "pysubs2>=1.8.0",
     "rapidfuzz>=3.10.1",
