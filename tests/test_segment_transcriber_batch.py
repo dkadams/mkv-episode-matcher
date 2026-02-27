@@ -55,6 +55,7 @@ def test_execute_uses_transcribe_many_when_available(monkeypatch, tmp_path):
     )
 
     video = tmp_path / "episode.mkv"
+    video.write_bytes(b"dummy")
     output = series.transcription_file(video)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps({"1": "cached"}), encoding="utf-8")
@@ -108,5 +109,6 @@ def test_execute_falls_back_to_transcribe(monkeypatch, tmp_path):
     )
 
     video = tmp_path / "episode.mkv"
+    video.write_bytes(b"dummy")
     segment_transcriber.execute([(video, [0, 1])])
     assert calls == [tmp_path / "chunk_0.wav", tmp_path / "chunk_30.wav"]

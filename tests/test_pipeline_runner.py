@@ -63,6 +63,7 @@ def test_pipeline_runner_sorts_extracts_and_preserves_segment_indexes(monkeypatc
         output_dir=series.ensure_transcription_text_dir(),
     )
     video = tmp_path / "episode.mkv"
+    video.write_bytes(b"dummy")
     result = runner.run({video: [3, 1]})
     outputs = runner.write_outputs(result)
     payload = outputs[video].read_text(encoding="utf-8")
@@ -111,6 +112,7 @@ def test_pipeline_runner_records_extract_failures(monkeypatch, tmp_path):
         output_dir=series.ensure_transcription_text_dir(),
     )
     video = tmp_path / "episode.mkv"
+    video.write_bytes(b"dummy")
     result = runner.run({video: [0, 1]})
     outputs = runner.write_outputs(result)
 
