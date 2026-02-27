@@ -26,8 +26,10 @@ def test_extract_uses_millisecond_start_in_chunk_name(tmp_path, monkeypatch):
     with patch("mkv_episode_matcher.audio_chunk_extractor.subprocess.run",
                side_effect=fake_run):
         extractor = AudioChunkExtractor()
-        first = extractor.extract(Path("episode.mkv"), start_time=1.25, duration=30)
-        second = extractor.extract(Path("episode.mkv"), start_time=2.75, duration=30)
+        input_video = tmp_path / "episode.mkv"
+        input_video.write_bytes(b"0" * 200_000)
+        first = extractor.extract(input_video, start_time=1.25, duration=30)
+        second = extractor.extract(input_video, start_time=2.75, duration=30)
         assert "AT1250ms" in first.name
         assert "AT2750ms" in second.name
         assert first != second
@@ -50,7 +52,9 @@ def test_extract_ffmpeg_failure_does_not_leave_cache_file(tmp_path, monkeypatch)
         output_path.write_bytes(b"PARTIAL")
         return SimpleNamespace(returncode=1, stderr="ffmpeg failed")
 
-    expected_name = unique_filename(Path("episode.mkv"), ".30S.AT1250ms.wav")
+    input_video = tmp_path / "episode.mkv"
+    input_video.write_bytes(b"0" * 200_000)
+    expected_name = unique_filename(input_video, ".30S.AT1250ms.wav")
     expected_chunk_path = (
         tmp_path / "mkv-episode-matcher-audio-chunks" / expected_name
     )
@@ -59,7 +63,7 @@ def test_extract_ffmpeg_failure_does_not_leave_cache_file(tmp_path, monkeypatch)
                side_effect=fake_run):
         extractor = AudioChunkExtractor()
         with pytest.raises(RuntimeError, match="ffmpeg failed extracting chunk"):
-            extractor.extract(Path("episode.mkv"), start_time=1.25, duration=30)
+            extractor.extract(input_video, start_time=1.25, duration=30)
 
     assert not expected_chunk_path.exists()
 
@@ -70,7 +74,9 @@ def test_extract_ffmpeg_failure_does_not_clobber_existing_chunk(tmp_path, monkey
         lambda: str(tmp_path),
     )
 
-    expected_name = unique_filename(Path("episode.mkv"), ".30S.AT1250ms.wav")
+    input_video = tmp_path / "episode.mkv"
+    input_video.write_bytes(b"0" * 200_000)
+    expected_name = unique_filename(input_video, ".30S.AT1250ms.wav")
     expected_chunk_path = (
         tmp_path / "mkv-episode-matcher-audio-chunks" / expected_name
     )
@@ -95,7 +101,7 @@ def test_extract_ffmpeg_failure_does_not_clobber_existing_chunk(tmp_path, monkey
                side_effect=fake_run):
         extractor = AudioChunkExtractor()
         with pytest.raises(RuntimeError, match="ffmpeg failed extracting chunk"):
-            extractor.extract(Path("episode.mkv"), start_time=1.25, duration=30)
+            extractor.extract(input_video, start_time=1.25, duration=30)
 
     assert expected_chunk_path.read_bytes() == original_bytes
 

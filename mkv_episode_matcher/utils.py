@@ -1,7 +1,7 @@
 # utils.py
-import hashlib
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 
 from loguru import logger
@@ -153,13 +153,38 @@ def compare_text(text1, text2):
     matching_lines = set(flat_text1).intersection(flat_text2)
     return len(matching_lines)
 
+
+def opensubtitles_movie_hash(input: Path) -> str:
+    resolved = input.resolve()
+    stat = resolved.stat()
+    return _opensubtitles_movie_hash_cached(str(resolved), stat.st_size, stat.st_mtime_ns)
+
+
+@lru_cache(maxsize=4096)
+def _opensubtitles_movie_hash_cached(path: str, size: int, mtime_ns: int) -> str:
+    del mtime_ns
+    hash_value = size & 0xFFFFFFFFFFFFFFFF
+    chunk_size = 65536
+
+    with open(path, "rb") as file:
+        first_chunk = file.read(chunk_size)
+        if size >= chunk_size:
+            file.seek(size - chunk_size)
+        else:
+            file.seek(0)
+        last_chunk = file.read(chunk_size)
+
+    for chunk in (first_chunk, last_chunk):
+        for index in range(0, len(chunk), 8):
+            piece = chunk[index:index + 8]
+            if len(piece) < 8:
+                piece = piece.ljust(8, b"\0")
+            hash_value = (hash_value + int.from_bytes(piece, "little")) & 0xFFFFFFFFFFFFFFFF
+
+    return f"{hash_value:016x}"
+
+
 def unique_filename(input: Path, extension: str) -> str:
-    path = input.resolve()
+    movie_hash = opensubtitles_movie_hash(input)
 
-    path_bytes = str(path).encode("utf-8")
-    path_hash = hashlib.sha256(path_bytes).hexdigest()
-
-    # The parent should enough to uniquely identify the file, but including the
-    # path hash ensures uniqueness. Adding the parent directory name helps in
-    # identifying the original file path.
-    return f"{path_hash}_{input.parent.name}_{input.with_suffix(extension).name}"
+    return f"{movie_hash}{extension}"
