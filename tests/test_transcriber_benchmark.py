@@ -249,8 +249,8 @@ def test_segment_selection_is_deterministic():
         random_seed=12345,
     )
     infos = [
-        VideoInfo(full_path_str="/a", byte_count=1, minutes=22.0, segments=44),
-        VideoInfo(full_path_str="/b", byte_count=1, minutes=44.0, segments=88),
+        VideoInfo(byte_count=1, minutes=22.0, segments=44),
+        VideoInfo(byte_count=1, minutes=44.0, segments=88),
     ]
 
     first = _get_segment_indexes(config, series, infos)
@@ -263,6 +263,7 @@ def test_transcribe_segments_uses_pipeline_runner(monkeypatch, tmp_path):
     config = Configuration(args=args, stored=ConfigParser())
     series = Series(Path("/tmp/s"), {"name": "s"}, "s", 30, 1)
     video = tmp_path / "ep.mkv"
+    video.write_text("x", encoding="utf-8")
 
     seen = {}
 
@@ -321,7 +322,6 @@ def test_benchmark_group_aggregates_extract_and_transcribe_metrics(monkeypatch, 
         "mkv_episode_matcher.transcriber_benchmark._collect_video_infos",
         lambda _files, _duration: {
             video: VideoInfo(
-                full_path_str=str(video.resolve()),
                 byte_count=video.stat().st_size,
                 minutes=1.0,
                 segments=2,

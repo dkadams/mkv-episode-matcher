@@ -297,7 +297,6 @@ def _video_info(path: Path, segment_duration: int) -> tuple[Path, VideoInfo]:
     minutes = seconds / 60.0
     segments = math.ceil(seconds / segment_duration)
     return path, VideoInfo(
-        full_path_str=str(resolved),
         byte_count=resolved.stat().st_size,
         minutes=minutes,
         segments=segments,

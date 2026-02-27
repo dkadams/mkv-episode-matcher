@@ -23,6 +23,7 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.misalignment import MisalignmentPolicy
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.pipeline_runner import PipelineRunner
+from mkv_episode_matcher.utils import opensubtitles_movie_hash
 from mkv_episode_matcher.video_helper import get_video_duration_seconds
 
 console = Console()
@@ -31,7 +32,6 @@ PathDict: Type = dict[Path, Path]
 
 @dataclass(frozen=True, eq=True, order=True)
 class VideoInfo:
-    full_path_str: str
     byte_count: int
     minutes: float
     segments: int
@@ -133,17 +133,19 @@ class IndexedEpisodeMatcher:
 
         segments_per_minute = self.config.args.segments_per_minute
         with ThreadPoolExecutor(max_workers=10) as threads:
-            def get_video_info(path: Path) -> tuple[Path, VideoInfo]:
+            def get_video_info(path: Path) -> tuple[Path, str, VideoInfo]:
                 logger.info(f"Getting video info for: {path}")
                 full_path = path.resolve()
+                content_id = opensubtitles_movie_hash(full_path)
                 byte_count = full_path.stat().st_size
-                full_path_str = str(full_path)
-                video_dict = video_info_dict.get(full_path_str)
+                video_dict = video_info_dict.get(content_id)
                 if video_dict and video_dict["byte_count"] == byte_count:
                     logger.info(f"Found cached video info for: {path}")
-                    return path, VideoInfo(str(full_path_str), byte_count,
-                                           video_dict["minutes"],
-                                           video_dict["segments"])
+                    return path, content_id, VideoInfo(
+                        byte_count,
+                        video_dict["minutes"],
+                        video_dict["segments"],
+                    )
 
                 logger.info(f"Retrieving duration for: {path} to create video info")
                 # This executes ffmpeg, so we only call it if we don't have a
@@ -151,8 +153,7 @@ class IndexedEpisodeMatcher:
                 seconds = get_video_duration_seconds(full_path)
                 minutes = seconds / 60.0
                 segments = math.ceil(seconds / self.series.segment_duration)
-                return path, VideoInfo(full_path_str, byte_count,
-                                       minutes, segments)
+                return path, content_id, VideoInfo(byte_count, minutes, segments)
 
             def get_cached_segment_count(path: Path) -> tuple[Path, int]:
                 logger.info(f"Checking for cached transcription for: {path}")
@@ -170,6 +171,7 @@ class IndexedEpisodeMatcher:
                                                       total=len(videos))
 
             video_info_by_path = {}
+            content_id_by_path = {}
             segment_count_by_path = {}
 
             futures = [threads.submit(get_video_info, path)
@@ -181,8 +183,9 @@ class IndexedEpisodeMatcher:
             for future in as_completed(futures):
                 logger.info(f"Completed video info/transcript cache task: {future}")
                 match future.result():
-                    case (Path() as path, VideoInfo() as video_info):
+                    case (Path() as path, str() as content_id, VideoInfo() as video_info):
                         video_info_by_path[path] = video_info
+                        content_id_by_path[path] = content_id
                         progress.update(video_info_task, advance=1)
 
                     case (Path() as path, cached_segment_count):
@@ -194,8 +197,10 @@ class IndexedEpisodeMatcher:
 
         write_video_info_task = progress.add_task(f"Writing video info cache",
                                                   total=1)
-        video_info_dict = {video_info.full_path_str: asdict(video_info)
-                           for video_info in video_info_by_path.values()}
+        video_info_dict = {
+            content_id_by_path[path]: asdict(video_info)
+            for path, video_info in video_info_by_path.items()
+        }
         with video_cache_path.open("w") as cache:
             json.dump(video_info_dict, cache)
         progress.update(write_video_info_task, advance=1)
