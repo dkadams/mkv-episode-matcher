@@ -2,7 +2,6 @@ import argparse
 
 from mkv_episode_matcher import __version__
 from mkv_episode_matcher.annoy_subtitle_index import AnnoySubtitleIndex
-from mkv_episode_matcher.chroma_subtitle_index import ChromaSubtitleIndex
 from mkv_episode_matcher.config import edit_config, CONFIG_FILE
 from mkv_episode_matcher.dataset_collector import collect_dataset
 from mkv_episode_matcher.dataset_evaluator import evaluate_dataset
@@ -521,10 +520,6 @@ def get_episode_parser():
 def get_index_parser():
     parser = argparse.ArgumentParser(add_help=False)
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--chroma", dest="index_type",
-        action="store_const", const=ChromaSubtitleIndex,
-        help="Use chroma for indexes.")
     group.add_argument(
         "--annoy", dest="index_type",
         action="store_const", const=AnnoySubtitleIndex,

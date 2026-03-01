@@ -97,8 +97,6 @@ The `.mkv-episode-matcher/` directory is organized like this (some items appear 
 │           │   └── <interval>.idx
 │           ├── annoy.index/
 │           │   └── <interval>.idx
-│           └── chroma.index/
-│               └── (chroma db files)
 └── matches/
     └── <timestamp>.jsonl
 ```
@@ -141,8 +139,6 @@ Created by `index-subs`. Stores embedding data and index structures used for sub
   - The default model directory is `sentence-transformers-all-MiniLM-L6-v2`.
 - `hnswlib.index/` and `annoy.index/`
   - Per-interval index files (`.idx`) for the selected index backend.
-- `chroma.index/`
-  - On-disk Chroma database files (directory contents managed by Chroma).
 
 #### `matches/`
 Created by `match`. Contains a JSONL file per run with interval-level match results. Filenames are timestamps in ISO format.

@@ -73,7 +73,7 @@ mkv-episode-matcher index-subs /path/to/Series
 Options:
 
 - `--rebuild`: Rebuild indexes from scratch
-- `--chroma`, `--annoy`, `--hnswlib`: Select index backend (default: hnswlib)
+- `--annoy`, `--hnswlib`: Select index backend (default: hnswlib)
 - `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
 
 ### `match`
