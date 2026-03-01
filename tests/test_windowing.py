@@ -1,13 +1,15 @@
+import pytest
+
 from argparse import Namespace
 from types import SimpleNamespace
 
-import pytest
-
 from mkv_episode_matcher.windowing import (
+    distance_with_window_penalty,
     make_window_config,
     map_segment_index_to_window_index,
     neighbor_window_indexes,
     resolve_subtitle_overlap_seconds,
+    should_expand_to_neighbor_windows,
 )
 
 
@@ -48,3 +50,15 @@ def test_segment_index_mapping_and_neighbors():
     )
     assert mapped == 3
     assert neighbor_window_indexes(mapped) == [2, 3, 4]
+
+
+def test_should_expand_to_neighbor_windows_uses_confidence_gate():
+    assert should_expand_to_neighbor_windows([]) is True
+    assert should_expand_to_neighbor_windows([0.12, 0.40]) is False
+    assert should_expand_to_neighbor_windows([0.30, 0.50]) is False
+    assert should_expand_to_neighbor_windows([0.30, 0.33]) is True
+
+
+def test_distance_with_window_penalty():
+    assert distance_with_window_penalty(0.2, 3, 3) == 0.2
+    assert distance_with_window_penalty(0.2, 4, 3) == pytest.approx(0.21)

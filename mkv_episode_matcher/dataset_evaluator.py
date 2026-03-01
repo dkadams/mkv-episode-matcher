@@ -4,8 +4,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
+import hnswlib
 import numpy as np
 import pysubs2
 from rich.console import Console
@@ -16,9 +17,11 @@ from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import SentenceTransformerModel
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.windowing import (
+    distance_with_window_penalty,
     make_window_config,
     map_segment_index_to_window_index,
     neighbor_window_indexes,
+    should_expand_to_neighbor_windows,
 )
 
 console = Console()
@@ -39,6 +42,12 @@ class DatasetPaths:
     manifest: Path
     subtitles_dir: Path
     transcriptions_dir: Path
+
+
+@dataclass(frozen=True)
+class IntervalSubtitleIndex:
+    episodes: list[EpisodeKey]
+    index: Any
 
 
 def evaluate_dataset(config: Configuration):
@@ -82,7 +91,7 @@ def evaluate_dataset(config: Configuration):
 
     model = SentenceTransformerModel()
     with Progress() as progress:
-        subtitle_vectors = _build_subtitle_vectors(
+        subtitle_indexes = _build_subtitle_indexes(
             dataset_paths.subtitles_dir,
             interval_seconds,
             subtitle_overlap_seconds,
@@ -91,7 +100,7 @@ def evaluate_dataset(config: Configuration):
         )
         overall_report = _score_segments(
             segments=segments,
-            subtitle_vectors=subtitle_vectors,
+            subtitle_indexes=subtitle_indexes,
             model=model,
             top_ks=top_ks,
             max_failures=config.args.show_failures,
@@ -108,7 +117,7 @@ def evaluate_dataset(config: Configuration):
         for profile, profile_segments in _segments_by_profile(segments).items():
             by_profile[profile] = _score_segments(
                 segments=profile_segments,
-                subtitle_vectors=subtitle_vectors,
+                subtitle_indexes=subtitle_indexes,
                 model=model,
                 top_ks=top_ks,
                 max_failures=config.args.show_failures,
@@ -121,6 +130,7 @@ def evaluate_dataset(config: Configuration):
         "dataset_dir": str(dataset_dir),
         "segment_duration": interval_seconds,
         "subtitle_overlap_seconds": subtitle_overlap_seconds,
+        "retrieval_mode": "indexed_hnswlib_two_stage_penalized",
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     })
     _print_report(report, top_ks)
@@ -241,10 +251,10 @@ def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id:
     return segments
 
 
-def _build_subtitle_vectors(subtitles_dir: Path, segment_duration_seconds: int,
+def _build_subtitle_indexes(subtitles_dir: Path, segment_duration_seconds: int,
     subtitle_overlap_seconds: int,
     model: SentenceTransformerModel,
-    progress: Progress | None = None) -> dict[int, tuple[list[EpisodeKey], np.ndarray]]:
+    progress: Progress | None = None) -> dict[int, IntervalSubtitleIndex]:
     window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
     vectors_by_interval: dict[int, list[tuple[EpisodeKey, np.ndarray]]] = {}
     srt_paths = sorted(subtitles_dir.rglob("*.srt"))
@@ -270,12 +280,28 @@ def _build_subtitle_vectors(subtitles_dir: Path, segment_duration_seconds: int,
         if progress and build_task is not None:
             progress.update(build_task, advance=1)
 
-    reduced: dict[int, tuple[list[EpisodeKey], np.ndarray]] = {}
+    index_task = None
+    if progress:
+        index_task = progress.add_task("Indexing subtitle intervals", total=len(vectors_by_interval))
+
+    reduced: dict[int, IntervalSubtitleIndex] = {}
     for interval_index, episode_vectors in vectors_by_interval.items():
         episodes = [episode for episode, _ in episode_vectors]
         matrix = np.vstack([vector for _, vector in episode_vectors]).astype(np.float32)
-        reduced[interval_index] = (episodes, matrix)
+        ann_index = _build_interval_index(matrix)
+        reduced[interval_index] = IntervalSubtitleIndex(episodes=episodes, index=ann_index)
+        if progress and index_task is not None:
+            progress.update(index_task, advance=1)
     return reduced
+
+
+def _build_interval_index(vectors: np.ndarray):
+    dim = vectors.shape[1]
+    index = hnswlib.Index(space="cosine", dim=dim)
+    index.init_index(max_elements=len(vectors), ef_construction=200, M=16)
+    index.add_items(vectors, np.arange(len(vectors), dtype=np.int32))
+    index.set_ef(200)
+    return index
 
 
 def _window_texts(srt_path: Path, window_seconds: int, overlap_seconds: int) -> Iterable[tuple[int, str]]:
@@ -298,10 +324,11 @@ def _window_texts(srt_path: Path, window_seconds: int, overlap_seconds: int) -> 
 
 
 def _score_segments(segments: list[SegmentRecord],
-    subtitle_vectors: dict[int, tuple[list[EpisodeKey], np.ndarray]],
+    subtitle_indexes: dict[int, IntervalSubtitleIndex],
     model: SentenceTransformerModel, top_ks: list[int], max_failures: int,
     segment_duration_seconds: int = 30,
     subtitle_overlap_seconds: int = 5,
+    max_results_per_query: int = 10,
     progress: Progress | None = None) -> dict:
     window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
     top_hits = {k: 0 for k in top_ks}
@@ -320,41 +347,57 @@ def _score_segments(segments: list[SegmentRecord],
             segment_duration_seconds,
             window_config.stride_seconds,
         )
-        candidate_intervals = neighbor_window_indexes(mapped_interval)
+        query_embedding = model.encode_query(segment.transcript_text)
+        per_episode_best: dict[EpisodeKey, float] = {}
+        mapped_window_distances: list[float] = []
 
-        candidate_episodes: list[EpisodeKey] = []
-        candidate_matrices = []
-        for interval_index in candidate_intervals:
-            interval_data = subtitle_vectors.get(interval_index)
-            if not interval_data:
-                continue
-            episodes, matrix = interval_data
-            candidate_episodes.extend(episodes)
-            candidate_matrices.append(matrix)
+        mapped_data = subtitle_indexes.get(mapped_interval)
+        if mapped_data:
+            for episode, raw_distance, interval_index in _query_interval_index(
+                mapped_data, query_embedding, mapped_interval, max_results_per_query
+            ):
+                mapped_window_distances.append(raw_distance)
+                adjusted_distance = distance_with_window_penalty(
+                    raw_distance,
+                    interval_index,
+                    mapped_interval,
+                )
+                current = per_episode_best.get(episode)
+                if current is None or adjusted_distance < current:
+                    per_episode_best[episode] = adjusted_distance
 
-        if not candidate_matrices:
+        if should_expand_to_neighbor_windows(mapped_window_distances):
+            for interval_index in neighbor_window_indexes(mapped_interval):
+                if interval_index == mapped_interval:
+                    continue
+                interval_data = subtitle_indexes.get(interval_index)
+                if not interval_data:
+                    continue
+                for episode, raw_distance, candidate_interval in _query_interval_index(
+                    interval_data,
+                    query_embedding,
+                    interval_index,
+                    max_results_per_query,
+                ):
+                    adjusted_distance = distance_with_window_penalty(
+                        raw_distance,
+                        candidate_interval,
+                        mapped_interval,
+                    )
+                    current = per_episode_best.get(episode)
+                    if current is None or adjusted_distance < current:
+                        per_episode_best[episode] = adjusted_distance
+
+        if not per_episode_best:
             missing_interval += 1
             if progress and score_task is not None:
                 progress.update(score_task, advance=1)
             continue
 
-        matrix = np.vstack(candidate_matrices).astype(np.float32)
-        query = model.encode_query(segment.transcript_text)
-        scores = matrix @ query
-        per_episode_best: dict[EpisodeKey, float] = {}
-        for episode, score in zip(candidate_episodes, scores):
-            current = per_episode_best.get(episode)
-            score_value = float(score)
-            if current is None or score_value > current:
-                per_episode_best[episode] = score_value
-
-        ranked = [
-            episode
-            for episode, _ in sorted(
-                per_episode_best.items(),
-                key=lambda item: (-item[1], item[0]),
-            )
-        ]
+        ranked = [episode for episode, _ in sorted(
+            per_episode_best.items(),
+            key=lambda item: (item[1], item[0]),
+        )]
 
         rank = _first_expected_rank(ranked, segment.expected)
         evaluated += 1
@@ -386,6 +429,26 @@ def _score_segments(segments: list[SegmentRecord],
         "top_hits": {f"top_{k}": top_hits[k] for k in top_ks},
         "failure_examples": failures,
     }
+
+
+def _query_interval_index(
+    interval_data: IntervalSubtitleIndex,
+    query_embedding: np.ndarray,
+    interval_index: int,
+    max_results_per_query: int,
+) -> list[tuple[EpisodeKey, float, int]]:
+    count = interval_data.index.get_current_count()
+    if count <= 0:
+        return []
+    k = min(max_results_per_query, count)
+    ids_by_q, dists_by_q = interval_data.index.knn_query(
+        query_embedding, k=k, num_threads=1, filter=None
+    )
+    ids, dists = ids_by_q[0], dists_by_q[0]
+    return [
+        (interval_data.episodes[int(id)], float(distance), interval_index)
+        for id, distance in zip(ids, dists)
+    ]
 
 
 def _segments_by_profile(segments: list[SegmentRecord]) -> dict[str, list[SegmentRecord]]:

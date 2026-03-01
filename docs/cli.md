@@ -127,6 +127,8 @@ Options (subset):
 - `--top-k`: Top-k values to report
 - `--profiles`: Variant profiles to include
 
+This command uses indexed ANN retrieval over subtitle windows (hnswlib) with a two-stage strategy (mapped window first, neighbors when confidence is low) and window-offset distance penalties, then checks ranked predictions against manifest labels.
+
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.
 

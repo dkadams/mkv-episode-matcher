@@ -13,8 +13,10 @@ from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.subtitle_embeddings_extractor import \
     SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.windowing import (
+    distance_with_window_penalty,
     neighbor_window_indexes,
     map_segment_index_to_window_index,
+    should_expand_to_neighbor_windows,
 )
 
 console = Console()
@@ -62,41 +64,59 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                 self.series.segment_duration,
                 self.window_config.stride_seconds,
             )
-            candidate_intervals = [
-                idx
-                for idx in neighbor_window_indexes(mapped_interval)
-                if idx in self.indexes
-            ]
-            if not candidate_intervals:
-                logger.warning(f"No index found for segment: {segment_index} mapped to interval: {mapped_interval}")
-                continue
 
             per_episode: dict[EpisodeKey, IntervalMatch] = {}
-            for interval_idx in candidate_intervals:
-                index_entry = self.indexes.get(interval_idx)
-                if index_entry is None:
-                    continue
-                directory, index = index_entry
-                ids, distances = index.get_nns_by_vector(
+            mapped_window_distances: list[float] = []
+
+            mapped_entry = self.indexes.get(mapped_interval)
+            if mapped_entry is not None:
+                for episode, raw_distance, interval_idx in self._query_interval(
+                    mapped_entry,
                     embedding,
+                    mapped_interval,
                     max_results_per_query,
-                    include_distances=True,
-                )
-                for id, distance in zip(ids, distances):
-                    episode = directory[id]
+                ):
+                    mapped_window_distances.append(raw_distance)
+                    adjusted_distance = distance_with_window_penalty(
+                        raw_distance,
+                        interval_idx,
+                        mapped_interval,
+                    )
                     candidate = IntervalMatch(
                         embeddings_path,
                         int(segment_index),
                         episode,
                         interval_idx,
-                        float(distance),
+                        adjusted_distance,
                     )
-                    existing = per_episode.get(episode)
-                    if existing is None or candidate.distance < existing.distance or (
-                        candidate.distance == existing.distance
-                        and candidate.episode_index < existing.episode_index
+                    self._merge_best_by_episode(per_episode, candidate)
+
+            if should_expand_to_neighbor_windows(mapped_window_distances):
+                for interval_idx in neighbor_window_indexes(mapped_interval):
+                    if interval_idx == mapped_interval:
+                        continue
+                    index_entry = self.indexes.get(interval_idx)
+                    if index_entry is None:
+                        continue
+                    for episode, raw_distance, candidate_interval in self._query_interval(
+                        index_entry,
+                        embedding,
+                        interval_idx,
+                        max_results_per_query,
                     ):
-                        per_episode[episode] = candidate
+                        adjusted_distance = distance_with_window_penalty(
+                            raw_distance,
+                            candidate_interval,
+                            mapped_interval,
+                        )
+                        candidate = IntervalMatch(
+                            embeddings_path,
+                            int(segment_index),
+                            episode,
+                            candidate_interval,
+                            adjusted_distance,
+                        )
+                        self._merge_best_by_episode(per_episode, candidate)
 
             if per_episode:
                 deduped = sorted(
@@ -104,8 +124,35 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                     key=lambda match: (match.distance, match.episode_index, match.episode),
                 )[:max_results_per_query]
                 results.extend(deduped)
+            else:
+                logger.warning(
+                    f"No index results found for segment: {segment_index} mapped to interval: {mapped_interval}"
+                )
 
         return results
+
+    @staticmethod
+    def _merge_best_by_episode(per_episode: dict[EpisodeKey, IntervalMatch], candidate: IntervalMatch):
+        existing = per_episode.get(candidate.episode)
+        if existing is None or candidate.distance < existing.distance or (
+            candidate.distance == existing.distance
+            and candidate.episode_index < existing.episode_index
+        ):
+            per_episode[candidate.episode] = candidate
+
+    @staticmethod
+    def _query_interval(index_entry: tuple[dict[int, EpisodeKey], AnnoyIndex],
+        embedding: np.ndarray, interval_idx: int, max_results_per_query: int) -> list[tuple[EpisodeKey, float, int]]:
+        directory, index = index_entry
+        ids, distances = index.get_nns_by_vector(
+            embedding,
+            max_results_per_query,
+            include_distances=True,
+        )
+        return [
+            (directory[id], float(distance), interval_idx)
+            for id, distance in zip(ids, distances)
+        ]
 
     def load_indexes(self):
         if not self.index_dir.exists():

@@ -3,6 +3,7 @@ from rich.progress import Progress
 
 from mkv_episode_matcher.dataset_evaluator import (
     DatasetPaths,
+    IntervalSubtitleIndex,
     SegmentRecord,
     _filter_records_by_profiles,
     _first_expected_rank,
@@ -18,6 +19,18 @@ from mkv_episode_matcher.episode import EpisodeKey
 class DummyModel:
     def encode_query(self, _text: str) -> np.ndarray:
         return np.array([1.0, 0.0], dtype=np.float32)
+
+
+class FakeAnnIndex:
+    def __init__(self, ids, distances):
+        self._ids = np.array([ids], dtype=np.int32)
+        self._distances = np.array([distances], dtype=np.float32)
+
+    def get_current_count(self):
+        return self._ids.shape[1]
+
+    def knn_query(self, _query, k, num_threads=1, filter=None):
+        return self._ids[:, :k], self._distances[:, :k]
 
 
 def test_parse_episode_key():
@@ -39,23 +52,16 @@ def test_score_segments_counts_multi_episode_hit_in_top_k():
             video_path="video.mkv",
         )
     ]
-    subtitle_vectors = {
-        0: (
-            [EpisodeKey(1, 1), EpisodeKey(1, 3), EpisodeKey(1, 2)],
-            np.array(
-                [
-                    [0.8, 0.0],
-                    [0.9, 0.0],
-                    [0.7, 0.0],
-                ],
-                dtype=np.float32,
-            ),
+    subtitle_indexes = {
+        0: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(1, 1), EpisodeKey(1, 3), EpisodeKey(1, 2)],
+            index=FakeAnnIndex(ids=[0, 1, 2], distances=[0.2, 0.1, 0.3]),
         )
     }
 
     report = _score_segments(
         segments=segments,
-        subtitle_vectors=subtitle_vectors,
+        subtitle_indexes=subtitle_indexes,
         model=DummyModel(),
         top_ks=[1, 3],
         max_failures=5,
@@ -146,16 +152,16 @@ def test_score_segments_uses_neighbor_windows():
             video_path="video.mkv",
         )
     ]
-    subtitle_vectors = {
-        2: (
-            [EpisodeKey(2, 1)],
-            np.array([[1.0, 0.0]], dtype=np.float32),
+    subtitle_indexes = {
+        2: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(2, 1)],
+            index=FakeAnnIndex(ids=[0], distances=[0.1]),
         )
     }
 
     report = _score_segments(
         segments=segments,
-        subtitle_vectors=subtitle_vectors,
+        subtitle_indexes=subtitle_indexes,
         model=DummyModel(),
         top_ks=[1, 3],
         max_failures=5,
@@ -177,23 +183,16 @@ def test_score_segments_dedupes_repeated_episode_candidates():
             video_path="video.mkv",
         )
     ]
-    subtitle_vectors = {
-        0: (
-            [EpisodeKey(1, 1), EpisodeKey(1, 1), EpisodeKey(1, 2)],
-            np.array(
-                [
-                    [0.9, 0.0],
-                    [0.8, 0.0],
-                    [0.7, 0.0],
-                ],
-                dtype=np.float32,
-            ),
+    subtitle_indexes = {
+        0: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(1, 1), EpisodeKey(1, 1), EpisodeKey(1, 2)],
+            index=FakeAnnIndex(ids=[0, 1, 2], distances=[0.1, 0.2, 0.3]),
         )
     }
 
     report = _score_segments(
         segments=segments,
-        subtitle_vectors=subtitle_vectors,
+        subtitle_indexes=subtitle_indexes,
         model=DummyModel(),
         top_ks=[1, 2],
         max_failures=5,

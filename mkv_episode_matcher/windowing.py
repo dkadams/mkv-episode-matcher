@@ -5,6 +5,9 @@ from typing import Any
 
 DEFAULT_SUBTITLE_OVERLAP_SECONDS = 5
 DEFAULT_WINDOW_NEIGHBOR_RADIUS = 1
+DEFAULT_WINDOW_OFFSET_DISTANCE_PENALTY = 0.01
+DEFAULT_CONFIDENT_DISTANCE_THRESHOLD = 0.10
+DEFAULT_CONFIDENT_MARGIN_THRESHOLD = 0.20
 
 
 @dataclass(frozen=True)
@@ -61,3 +64,33 @@ def map_segment_index_to_window_index(
 
 def neighbor_window_indexes(mapped_window_index: int, radius: int = DEFAULT_WINDOW_NEIGHBOR_RADIUS) -> list[int]:
     return [idx for idx in range(mapped_window_index - radius, mapped_window_index + radius + 1) if idx >= 0]
+
+
+def distance_with_window_penalty(
+    raw_distance: float,
+    window_index: int,
+    mapped_window_index: int,
+    penalty_per_window: float = DEFAULT_WINDOW_OFFSET_DISTANCE_PENALTY,
+) -> float:
+    return float(raw_distance) + abs(int(window_index) - int(mapped_window_index)) * float(penalty_per_window)
+
+
+def should_expand_to_neighbor_windows(
+    mapped_window_distances: list[float],
+    confident_distance_threshold: float = DEFAULT_CONFIDENT_DISTANCE_THRESHOLD,
+    confident_margin_threshold: float = DEFAULT_CONFIDENT_MARGIN_THRESHOLD,
+) -> bool:
+    if not mapped_window_distances:
+        return True
+
+    ordered = sorted(float(distance) for distance in mapped_window_distances)
+    best = ordered[0]
+    if best <= confident_distance_threshold:
+        return False
+
+    if len(ordered) >= 2:
+        margin = ordered[1] - best
+        if margin >= confident_margin_threshold:
+            return False
+
+    return True
