@@ -9,14 +9,17 @@ from mkv_episode_matcher.abstract_subtitle_index import AbstractSubtitleIndex, \
     AbstractSubtitleIndexWriter
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
+from mkv_episode_matcher.segment_quality import load_low_info_intervals
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.subtitle_embeddings_extractor import \
     SubtitleEmbeddingsExtractor
 from mkv_episode_matcher.windowing import (
     distance_with_window_penalty,
+    merge_episode_window_hit,
     neighbor_window_indexes,
     map_segment_index_to_window_index,
     should_expand_to_neighbor_windows,
+    support_aware_score,
 )
 
 console = Console()
@@ -54,18 +57,47 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
         self.indexes = self.load_indexes()
 
     def query_intervals(self, embeddings_path: Path,
-        max_results_per_query: int = 10) -> list[IntervalMatch]:
+        max_results_per_query: int | None = None) -> list[IntervalMatch]:
         embeddings = np.load(embeddings_path)
+        max_results = int(max_results_per_query or self.max_results_per_query)
+
+        low_info_intervals = set()
+        if self.low_info_filter:
+            loaded = load_low_info_intervals(embeddings_path)
+            if loaded is None:
+                logger.warning(
+                    f"Low-info sidecar missing for {embeddings_path}; "
+                    "running without low-info filtering."
+                )
+            else:
+                low_info_intervals = loaded
+
+        rows = list(zip(embeddings["interval_index"], embeddings["embedding"]))
+        filtered_rows = [
+            (segment_index, embedding)
+            for segment_index, embedding in rows
+            if int(segment_index) not in low_info_intervals
+        ]
+        if self.low_info_filter and rows and not filtered_rows:
+            logger.warning(
+                f"All segments were filtered as low-info for {embeddings_path}; "
+                "falling back to unfiltered matching."
+            )
+            rows_to_score = rows
+        elif self.low_info_filter:
+            rows_to_score = filtered_rows
+        else:
+            rows_to_score = rows
+
         results: list[IntervalMatch] = []
-        for segment_index, embedding in zip(embeddings["interval_index"],
-                                            embeddings["embedding"]):
+        for segment_index, embedding in rows_to_score:
             mapped_interval = map_segment_index_to_window_index(
                 int(segment_index),
                 self.series.segment_duration,
                 self.window_config.stride_seconds,
             )
 
-            per_episode: dict[EpisodeKey, IntervalMatch] = {}
+            per_episode_support = {}
             mapped_window_distances: list[float] = []
 
             mapped_entry = self.indexes.get(mapped_interval)
@@ -74,7 +106,7 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                     mapped_entry,
                     embedding,
                     mapped_interval,
-                    max_results_per_query,
+                    max_results,
                 ):
                     mapped_window_distances.append(raw_distance)
                     adjusted_distance = distance_with_window_penalty(
@@ -82,17 +114,22 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                         interval_idx,
                         mapped_interval,
                     )
-                    candidate = IntervalMatch(
-                        embeddings_path,
-                        int(segment_index),
+                    merge_episode_window_hit(
+                        per_episode_support,
                         episode,
                         interval_idx,
                         adjusted_distance,
                     )
-                    self._merge_best_by_episode(per_episode, candidate)
 
-            if should_expand_to_neighbor_windows(mapped_window_distances):
-                for interval_idx in neighbor_window_indexes(mapped_interval):
+            should_expand = should_expand_to_neighbor_windows(
+                mapped_window_distances,
+                expansion_mode=self.window_expansion_mode,
+            )
+            if should_expand:
+                for interval_idx in neighbor_window_indexes(
+                    mapped_interval,
+                    radius=self.window_neighbor_radius,
+                ):
                     if interval_idx == mapped_interval:
                         continue
                     index_entry = self.indexes.get(interval_idx)
@@ -102,43 +139,52 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
                         index_entry,
                         embedding,
                         interval_idx,
-                        max_results_per_query,
+                        max_results,
                     ):
                         adjusted_distance = distance_with_window_penalty(
                             raw_distance,
                             candidate_interval,
                             mapped_interval,
                         )
-                        candidate = IntervalMatch(
-                            embeddings_path,
-                            int(segment_index),
+                        merge_episode_window_hit(
+                            per_episode_support,
                             episode,
                             candidate_interval,
                             adjusted_distance,
                         )
-                        self._merge_best_by_episode(per_episode, candidate)
 
-            if per_episode:
-                deduped = sorted(
-                    per_episode.values(),
-                    key=lambda match: (match.distance, match.episode_index, match.episode),
-                )[:max_results_per_query]
-                results.extend(deduped)
+            if per_episode_support:
+                ranked = []
+                for episode, support in per_episode_support.items():
+                    score, nearest_offset = support_aware_score(
+                        support,
+                        mapped_interval,
+                        support_window_bonus=self.support_window_bonus,
+                        support_offset_penalty=self.support_offset_penalty,
+                    )
+                    ranked.append((
+                        score,
+                        nearest_offset,
+                        episode,
+                        support.best_window_index,
+                    ))
+                ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+                for score, _, episode, best_window_index in ranked[:max_results]:
+                    results.append(
+                        IntervalMatch(
+                            embeddings_path,
+                            int(segment_index),
+                            episode,
+                            int(best_window_index),
+                            float(score),
+                        )
+                    )
             else:
                 logger.warning(
                     f"No index results found for segment: {segment_index} mapped to interval: {mapped_interval}"
                 )
 
         return results
-
-    @staticmethod
-    def _merge_best_by_episode(per_episode: dict[EpisodeKey, IntervalMatch], candidate: IntervalMatch):
-        existing = per_episode.get(candidate.episode)
-        if existing is None or candidate.distance < existing.distance or (
-            candidate.distance == existing.distance
-            and candidate.episode_index < existing.episode_index
-        ):
-            per_episode[candidate.episode] = candidate
 
     @staticmethod
     def _query_interval(index_entry: tuple[dict[int, EpisodeKey], AnnoyIndex],
