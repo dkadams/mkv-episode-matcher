@@ -16,8 +16,16 @@ from mkv_episode_matcher.series import Series, get_specified_episodes
 from mkv_episode_matcher.subtitle_fixed_intervalizer import \
     SubtitleFixedIntervalizer
 from mkv_episode_matcher.windowing import (
+    DEFAULT_SUPPORT_OFFSET_PENALTY,
+    DEFAULT_SUPPORT_WINDOW_BONUS,
     make_window_config,
+    resolve_low_info_cue_ratio,
+    resolve_low_info_filter,
+    resolve_low_info_min_words,
+    resolve_max_results_per_query,
     resolve_subtitle_overlap_seconds,
+    resolve_window_expansion_mode,
+    resolve_window_neighbor_radius,
 )
 
 console = Console()
@@ -38,6 +46,14 @@ class AbstractSubtitleIndex(ABC):
             self.interval_seconds, self.subtitle_overlap_seconds
         )
         self.window_profile_key = self.window_config.profile_key
+        self.window_expansion_mode = resolve_window_expansion_mode(config.args, series)
+        self.window_neighbor_radius = resolve_window_neighbor_radius(config.args, series)
+        self.low_info_filter = resolve_low_info_filter(config.args, series)
+        self.low_info_min_words = resolve_low_info_min_words(config.args, series)
+        self.low_info_cue_ratio = resolve_low_info_cue_ratio(config.args, series)
+        self.max_results_per_query = resolve_max_results_per_query(config.args, series)
+        self.support_window_bonus = DEFAULT_SUPPORT_WINDOW_BONUS
+        self.support_offset_penalty = DEFAULT_SUPPORT_OFFSET_PENALTY
 
         # Embeddings are shared across multiple index types, so they are stored
         # in the series index directory.

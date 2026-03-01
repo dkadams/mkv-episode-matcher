@@ -16,7 +16,13 @@ from mkv_episode_matcher.utils import unique_filename
 SERIES_DEFAULT_SETTINGS = {
     "segment_duration": 30,
     "subtitle_overlap_seconds": 5,
-    "random_seed": 12345
+    "random_seed": 12345,
+    "window_expansion_mode": "always",
+    "window_neighbor_radius": 1,
+    "low_info_filter": True,
+    "low_info_min_words": 8,
+    "low_info_cue_ratio": 0.25,
+    "max_results_per_query": 10,
 }
 
 console = Console()
@@ -31,6 +37,12 @@ class Series:
     segment_duration: int
     random_seed: int
     subtitle_overlap_seconds: int = SERIES_DEFAULT_SETTINGS["subtitle_overlap_seconds"]
+    window_expansion_mode: str = SERIES_DEFAULT_SETTINGS["window_expansion_mode"]
+    window_neighbor_radius: int = SERIES_DEFAULT_SETTINGS["window_neighbor_radius"]
+    low_info_filter: bool = SERIES_DEFAULT_SETTINGS["low_info_filter"]
+    low_info_min_words: int = SERIES_DEFAULT_SETTINGS["low_info_min_words"]
+    low_info_cue_ratio: float = SERIES_DEFAULT_SETTINGS["low_info_cue_ratio"]
+    max_results_per_query: int = SERIES_DEFAULT_SETTINGS["max_results_per_query"]
 
     @property
     def dot_dir(self) -> Path:
@@ -101,9 +113,41 @@ class Series:
             "subtitle_overlap_seconds",
             SERIES_DEFAULT_SETTINGS["subtitle_overlap_seconds"],
         )
+        window_expansion_mode = settings.get(
+            "window_expansion_mode",
+            SERIES_DEFAULT_SETTINGS["window_expansion_mode"],
+        )
+        window_neighbor_radius = settings.get(
+            "window_neighbor_radius",
+            SERIES_DEFAULT_SETTINGS["window_neighbor_radius"],
+        )
+        low_info_filter = settings.get(
+            "low_info_filter",
+            SERIES_DEFAULT_SETTINGS["low_info_filter"],
+        )
+        low_info_min_words = settings.get(
+            "low_info_min_words",
+            SERIES_DEFAULT_SETTINGS["low_info_min_words"],
+        )
+        low_info_cue_ratio = settings.get(
+            "low_info_cue_ratio",
+            SERIES_DEFAULT_SETTINGS["low_info_cue_ratio"],
+        )
+        max_results_per_query = settings.get(
+            "max_results_per_query",
+            SERIES_DEFAULT_SETTINGS["max_results_per_query"],
+        )
 
         return Series(series_dir, series_detail, series_name,
-                      segment_duration, random_seed, subtitle_overlap_seconds)
+                      int(segment_duration),
+                      int(random_seed),
+                      int(subtitle_overlap_seconds),
+                      str(window_expansion_mode),
+                      int(window_neighbor_radius),
+                      bool(low_info_filter),
+                      int(low_info_min_words),
+                      float(low_info_cue_ratio),
+                      int(max_results_per_query))
 
     def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
         season_detail = self.detail[f"season/{episode.season_number}"]

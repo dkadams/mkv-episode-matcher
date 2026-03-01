@@ -147,6 +147,42 @@ def add_init_series(subparsers, config_parser, series_dir_parser):
                                   type=int,
                                   help="The random seed to use for segmenting episodes (default: 12345)",
                                   default=12345)
+    init_show_parser.add_argument(
+        "--window-expansion-mode",
+        choices=["always", "two-stage"],
+        default="always",
+        help="Neighbor-window expansion mode for retrieval (default: always)",
+    )
+    init_show_parser.add_argument(
+        "--window-neighbor-radius",
+        type=int,
+        default=1,
+        help="Neighbor-window radius for retrieval (default: 1)",
+    )
+    init_show_parser.add_argument(
+        "--low-info-filter",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Filter low-information transcript segments during matching/evaluation",
+    )
+    init_show_parser.add_argument(
+        "--low-info-min-words",
+        type=int,
+        default=8,
+        help="Minimum token count before transcript segments are considered low-information",
+    )
+    init_show_parser.add_argument(
+        "--low-info-cue-ratio",
+        type=float,
+        default=0.25,
+        help="Cue-token ratio threshold used for low-information filtering",
+    )
+    init_show_parser.add_argument(
+        "--max-results-per-query",
+        type=int,
+        default=10,
+        help="Maximum candidates retrieved per interval query (default: 10)",
+    )
     init_show_parser.set_defaults(func=init_series)
 
 
@@ -343,6 +379,67 @@ def add_evaluate_dataset(subparsers, config_parser):
         default=20,
         help="Maximum failed examples to include in report output",
     )
+    evaluate_parser.add_argument(
+        "--errors-output",
+        help="Optional JSONL/CSV path to write per-segment top-1 mismatches",
+    )
+    evaluate_parser.add_argument(
+        "--include-match-text",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Include matched subtitle window text/time details for top predictions "
+            "in mismatch and failure outputs"
+        ),
+    )
+    evaluate_parser.add_argument(
+        "--window-expansion-mode",
+        choices=["always", "two-stage"],
+        default=None,
+        help="Neighbor-window expansion mode (default: series/meta setting or always)",
+    )
+    evaluate_parser.add_argument(
+        "--window-neighbor-radius",
+        type=int,
+        default=None,
+        help="Neighbor-window radius (default: series/meta setting or 1)",
+    )
+    evaluate_parser.add_argument(
+        "--low-info-filter",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Filter low-information transcript segments before scoring",
+    )
+    evaluate_parser.add_argument(
+        "--low-info-min-words",
+        type=int,
+        default=None,
+        help="Minimum words threshold for low-information filtering",
+    )
+    evaluate_parser.add_argument(
+        "--low-info-cue-ratio",
+        type=float,
+        default=None,
+        help="Cue-token ratio threshold for low-information filtering",
+    )
+    evaluate_parser.add_argument(
+        "--max-results-per-query",
+        type=int,
+        default=None,
+        help="Maximum candidates retrieved per queried window",
+    )
+    evaluate_parser.add_argument(
+        "--support-window-bonus",
+        type=float,
+        default=0.012,
+        help="Support bonus subtracted per additional supporting window",
+    )
+    evaluate_parser.add_argument(
+        "--support-offset-penalty",
+        type=float,
+        default=0.003,
+        help="Penalty per window of offset from mapped interval in support-aware scoring",
+    )
     evaluate_parser.set_defaults(func=evaluate_dataset)
 
 
@@ -383,6 +480,42 @@ def add_match(subparsers, config_parser, index_parser):
         type=int,
         default=None,
         help="Override subtitle window overlap in seconds (default: series setting or 5)",
+    )
+    match_parser.add_argument(
+        "--window-expansion-mode",
+        choices=["always", "two-stage"],
+        default=None,
+        help="Neighbor-window expansion mode (default: series setting or always)",
+    )
+    match_parser.add_argument(
+        "--window-neighbor-radius",
+        type=int,
+        default=None,
+        help="Neighbor-window radius (default: series setting or 1)",
+    )
+    match_parser.add_argument(
+        "--low-info-filter",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Filter low-information transcript segments before indexed matching",
+    )
+    match_parser.add_argument(
+        "--low-info-min-words",
+        type=int,
+        default=None,
+        help="Minimum words threshold for low-information filtering",
+    )
+    match_parser.add_argument(
+        "--low-info-cue-ratio",
+        type=float,
+        default=None,
+        help="Cue-token ratio threshold for low-information filtering",
+    )
+    match_parser.add_argument(
+        "--max-results-per-query",
+        type=int,
+        default=None,
+        help="Maximum candidates retrieved per queried window",
     )
 
     match_parser.add_argument('--num-matches','-n',

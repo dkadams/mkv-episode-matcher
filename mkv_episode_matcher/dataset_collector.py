@@ -14,7 +14,13 @@ from mkv_episode_matcher.misalignment import MisalignmentPolicy
 from mkv_episode_matcher.series import Series, SeriesDirectoryProcessor, get_specified_episodes
 from mkv_episode_matcher.windowing import (
     make_window_config,
+    resolve_low_info_cue_ratio,
+    resolve_low_info_filter,
+    resolve_low_info_min_words,
+    resolve_max_results_per_query,
     resolve_subtitle_overlap_seconds,
+    resolve_window_expansion_mode,
+    resolve_window_neighbor_radius,
 )
 
 console = Console()
@@ -33,6 +39,12 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
     if config.args.segment_duration is not None:
         series = dataclasses.replace(series, segment_duration=config.args.segment_duration)
     subtitle_overlap_seconds = resolve_subtitle_overlap_seconds(config.args, series)
+    window_expansion_mode = resolve_window_expansion_mode(config.args, series)
+    window_neighbor_radius = resolve_window_neighbor_radius(config.args, series)
+    low_info_filter = resolve_low_info_filter(config.args, series)
+    low_info_min_words = resolve_low_info_min_words(config.args, series)
+    low_info_cue_ratio = resolve_low_info_cue_ratio(config.args, series)
+    max_results_per_query = resolve_max_results_per_query(config.args, series)
     make_window_config(series.segment_duration, subtitle_overlap_seconds)
 
     misalign_profiles = list(dict.fromkeys(config.args.misalign_profiles or []))
@@ -229,6 +241,12 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
             "source_series_dir": str(series.dir),
             "segment_duration": series.segment_duration,
             "subtitle_overlap_seconds": subtitle_overlap_seconds,
+            "window_expansion_mode": window_expansion_mode,
+            "window_neighbor_radius": window_neighbor_radius,
+            "low_info_filter": low_info_filter,
+            "low_info_min_words": low_info_min_words,
+            "low_info_cue_ratio": low_info_cue_ratio,
+            "max_results_per_query": max_results_per_query,
             "segments_per_minute": config.args.segments_per_minute,
             "random_seed": series.random_seed,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

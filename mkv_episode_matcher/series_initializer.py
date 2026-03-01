@@ -61,6 +61,18 @@ class SeriesInitializer:
             series_settings["subtitle_overlap_seconds"] = self.config.args.subtitle_overlap_seconds
         if self.config.args.random_seed:
             series_settings["random_seed"] = self.config.args.random_seed
+        if self.config.args.window_expansion_mode is not None:
+            series_settings["window_expansion_mode"] = self.config.args.window_expansion_mode
+        if self.config.args.window_neighbor_radius is not None:
+            series_settings["window_neighbor_radius"] = self.config.args.window_neighbor_radius
+        if self.config.args.low_info_filter is not None:
+            series_settings["low_info_filter"] = self.config.args.low_info_filter
+        if self.config.args.low_info_min_words is not None:
+            series_settings["low_info_min_words"] = self.config.args.low_info_min_words
+        if self.config.args.low_info_cue_ratio is not None:
+            series_settings["low_info_cue_ratio"] = self.config.args.low_info_cue_ratio
+        if self.config.args.max_results_per_query is not None:
+            series_settings["max_results_per_query"] = self.config.args.max_results_per_query
         make_window_config(
             int(series_settings["segment_duration"]),
             int(series_settings["subtitle_overlap_seconds"]),
