@@ -12,6 +12,10 @@ from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.subtitle_embeddings_extractor import \
     SubtitleEmbeddingsExtractor
+from mkv_episode_matcher.windowing import (
+    neighbor_window_indexes,
+    map_segment_index_to_window_index,
+)
 
 console = Console()
 
@@ -24,7 +28,7 @@ class HnswlibSubtitleIndex(AbstractSubtitleIndex):
 
     @property
     def index_dir(self):
-        return self.series.index_dir / "hnswlib.index"
+        return self.profile_dir / "hnswlib.index"
 
 class HnswlibSubtitleIndexWriter(HnswlibSubtitleIndex, AbstractSubtitleIndexWriter):
 
@@ -58,34 +62,65 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
         embeddings = np.load(embeddings_path)
 
         results: list[IntervalMatch] = []
-        for interval_idx, embedding in zip(embeddings["interval_index"],
-                                           embeddings["embedding"]):
-            if not interval_idx in self.indexes:
-                logger.warning(f"No index found for interval: {interval_idx}")
+        for segment_index, embedding in zip(embeddings["interval_index"],
+                                            embeddings["embedding"]):
+            mapped_interval = map_segment_index_to_window_index(
+                int(segment_index),
+                self.series.segment_duration,
+                self.window_config.stride_seconds,
+            )
+            candidate_intervals = [
+                idx
+                for idx in neighbor_window_indexes(mapped_interval)
+                if idx in self.indexes
+            ]
+            if not candidate_intervals:
+                logger.warning(f"No index found for segment: {segment_index} mapped to interval: {mapped_interval}")
                 continue
 
-            directory, index = self.indexes.get(interval_idx)
+            per_episode: dict[EpisodeKey, IntervalMatch] = {}
+            for interval_idx in candidate_intervals:
+                directory, index = self.indexes[interval_idx]
 
-            # Avoid asking for more results than are available. Doing so causes
-            # hnswlib to throw this RuntimeError:
-            #   Cannot return the results in a contiguous 2D array. Probably
-            #       ef or M is too small
-            neighbor_count = min(max_results_per_query, index.get_current_count())
-            if neighbor_count == 0:
-                logger.warning(
-                    f"Index empty for interval: {interval_idx}, skipping."
+                # Avoid asking for more results than are available. Doing so causes
+                # hnswlib to throw this RuntimeError:
+                #   Cannot return the results in a contiguous 2D array. Probably
+                #       ef or M is too small
+                neighbor_count = min(max_results_per_query, index.get_current_count())
+                if neighbor_count == 0:
+                    logger.warning(
+                        f"Index empty for interval: {interval_idx}, skipping."
+                    )
+                    continue
+
+                ids_by_q, dists_by_q = index.knn_query(
+                    embedding, k=neighbor_count, num_threads=1, filter=None
                 )
-                continue
+                # knn_query supports multiple queries, but we only have one. So
+                # there'll only be one result.
+                ids, distances = ids_by_q[0], dists_by_q[0]
+                for id, distance in zip(ids, distances):
+                    episode = directory[id]
+                    candidate = IntervalMatch(
+                        embeddings_path,
+                        int(segment_index),
+                        episode,
+                        interval_idx,
+                        float(distance),
+                    )
+                    existing = per_episode.get(episode)
+                    if existing is None or candidate.distance < existing.distance or (
+                        candidate.distance == existing.distance
+                        and candidate.episode_index < existing.episode_index
+                    ):
+                        per_episode[episode] = candidate
 
-            ids_by_q, dists_by_q = index.knn_query(embedding, k=neighbor_count,
-                                                    num_threads=1, filter=None)
-            # knn_query supports multiple queries, but we only have one. So
-            # there'll only be one result.
-            ids, distances = ids_by_q[0], dists_by_q[0]
-            results.extend(IntervalMatch(embeddings_path, interval_idx,
-                                         directory[id], interval_idx,
-                                         distance)
-                           for id, distance in zip(ids, distances))
+            if per_episode:
+                deduped = sorted(
+                    per_episode.values(),
+                    key=lambda match: (match.distance, match.episode_index, match.episode),
+                )[:max_results_per_query]
+                results.extend(deduped)
         return results
 
 

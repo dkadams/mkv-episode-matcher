@@ -13,10 +13,14 @@ from mkv_episode_matcher.series import Series
 
 class SubtitleFixedIntervalizer:
     def __init__(self, config: Configuration, series: Series,
-        interval_seconds: int):
+        interval_seconds: int, subtitle_overlap_seconds: int = 0):
         self.config = config
         self.series = series
         self.interval_seconds = interval_seconds
+        self.subtitle_overlap_seconds = subtitle_overlap_seconds
+        self.stride_seconds = interval_seconds - subtitle_overlap_seconds
+        if self.stride_seconds < 1:
+            raise ValueError("subtitle overlap must be less than interval/window duration")
 
     def execute(self, episode: EpisodeKey, input: Path, output: Path):
         logger.info(f"Intervalizing subs for: {self.series.name},"
@@ -26,31 +30,32 @@ class SubtitleFixedIntervalizer:
 
         # The last sub in the file is not always a real subtitle. Sometimes it's
         # a tag for the transcriber.
-        max_ts_seconds = max(sub.end for sub in orig_subs)
+        max_ts_ms = max(sub.end for sub in orig_subs)
         details = self.series.get_episode_detail(episode, keys=["runtime"])
         if details["runtime"]:
-            runtime_minutes = min(max_ts_seconds, int(details["runtime"]) * 60)
+            runtime_ms = min(max_ts_ms, int(details["runtime"]) * 60 * 1000)
         else:
-            runtime_minutes = max_ts_seconds
+            runtime_ms = max_ts_ms
 
-        interval_count = math.ceil(runtime_minutes / self.interval_seconds)
-        indexed_intervals = self.get_indexed_intervals(interval_count)
+        indexed_intervals = self.get_indexed_intervals(runtime_ms)
 
         interval_subs = SSAFile()
-        for index, interval in indexed_intervals:
+        for index, start, end in indexed_intervals:
             interval_text = " ".join(sub.plaintext for sub in orig_subs
-                                if sub.start in interval or sub.end in interval)
+                                if sub.start < end and sub.end > start)
 
             # We still want to add an interval even if it's empty. That ensures
             # the indexes will be consistent between files
-            event = SSAEvent(start=interval.start, end=interval.stop,
+            event = SSAEvent(start=start, end=end,
                              text=interval_text)
             interval_subs.append(event)
 
         interval_subs.save(str(output), encoding="utf-8", format_="srt")
 
-    def get_indexed_intervals(self, interval_count: int) -> Iterable[tuple[int, range]]:
-        interval_ms = self.interval_seconds * 1000
+    def get_indexed_intervals(self, runtime_ms: int) -> Iterable[tuple[int, int, int]]:
+        window_ms = self.interval_seconds * 1000
+        stride_ms = self.stride_seconds * 1000
+        interval_count = math.ceil(runtime_ms / stride_ms)
         for i in range(interval_count):
-            start = i * interval_ms
-            yield i, range(start, start + interval_ms)
+            start = i * stride_ms
+            yield i, start, start + window_ms

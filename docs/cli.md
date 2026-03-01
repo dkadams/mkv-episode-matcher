@@ -49,6 +49,7 @@ Options:
 - `--id`: TMDb series id (skip search prompt)
 - `--refresh`: Re-fetch series details
 - `--segment-duration`: Segment duration in seconds (default: `30`)
+- `--subtitle-overlap-seconds`: Subtitle window overlap in seconds (default: `5`)
 - `--random-seed`: Random seed for segment selection (default: `12345`)
 
 ### `fetch-subs`
@@ -73,8 +74,11 @@ mkv-episode-matcher index-subs /path/to/Series
 Options:
 
 - `--rebuild`: Rebuild indexes from scratch
+- `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds (default: series setting or `5`)
 - `--annoy`, `--hnswlib`: Select index backend (default: hnswlib)
 - `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
+
+Set `--subtitle-overlap-seconds 0` to use fixed, non-overlapping windows.
 
 ### `match`
 Match video files against the indexed subtitle data.
@@ -86,12 +90,42 @@ mkv-episode-matcher match /path/to/Series /path/to/videos
 Options:
 
 - `--segments-per-minute`: Controls how many segments are transcribed (default: `0.5`)
+- `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds (default: series setting or `5`)
 - `--num-matches`, `-n`: Number of top matches to show (default: `5`)
 - `--confidence`: Confidence threshold (default: `0.7`)
 - `--no-transcription-cache`: Disable reusing cached transcriptions
 - `--display-by-episode`, `-E`: Show results grouped by episode (default)
 - `--display-by-file`, `-F`: Show results grouped by file
 - `--whispercpp`, `--parakeet-mlx`: Transcriber backend (default: `parakeet-mlx` on macOS, `whispercpp` on other platforms). `parakeet-mlx` is macOS-only.
+
+### `collect-dataset`
+Collect labeled transcription/subtitle pairs for evaluation.
+
+```bash
+mkv-episode-matcher collect-dataset /path/to/Series --output-dir /tmp/dataset
+```
+
+Options (subset):
+
+- `--segment-duration`: Override segment duration in seconds
+- `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds
+- `--segments-per-minute`: Segment sampling rate for transcription
+- `--include-aligned` / `--no-include-aligned`: Include aligned variants
+- `--misalign-profiles`: Misalignment profiles to generate
+
+### `evaluate-dataset`
+Evaluate transcript-to-subtitle retrieval quality from a collected dataset.
+
+```bash
+mkv-episode-matcher evaluate-dataset /tmp/dataset
+```
+
+Options (subset):
+
+- `--segment-duration`: Override segment duration in seconds
+- `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds
+- `--top-k`: Top-k values to report
+- `--profiles`: Variant profiles to include
 
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.

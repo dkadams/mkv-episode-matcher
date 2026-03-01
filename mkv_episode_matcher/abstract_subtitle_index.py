@@ -15,6 +15,10 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.series import Series, get_specified_episodes
 from mkv_episode_matcher.subtitle_fixed_intervalizer import \
     SubtitleFixedIntervalizer
+from mkv_episode_matcher.windowing import (
+    make_window_config,
+    resolve_subtitle_overlap_seconds,
+)
 
 console = Console()
 
@@ -26,11 +30,19 @@ class AbstractSubtitleIndex(ABC):
         self.series = series
 
         self.embedding_model = SentenceTransformerModel()
-        self.interval_seconds = 30
+        self.interval_seconds = self.series.segment_duration
+        self.subtitle_overlap_seconds = resolve_subtitle_overlap_seconds(
+            self.config.args, self.series
+        )
+        self.window_config = make_window_config(
+            self.interval_seconds, self.subtitle_overlap_seconds
+        )
+        self.window_profile_key = self.window_config.profile_key
 
         # Embeddings are shared across multiple index types, so they are stored
         # in the series index directory.
-        embeddings_dir = series.index_dir / "embeddings"
+        self.profile_dir = series.index_dir / self.window_profile_key
+        embeddings_dir = self.profile_dir / "embeddings"
 
         self.interval_subs_dir = embeddings_dir / "interval-subs"
         self.interval_subs_dir.mkdir(parents=True, exist_ok=True)
@@ -50,7 +62,8 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
         super().__init__(config, series)
 
         self.sub_intervalizer = SubtitleFixedIntervalizer(config, series,
-                                                          self.interval_seconds)
+                                                          self.interval_seconds,
+                                                          self.subtitle_overlap_seconds)
         self.embedding_extractor = SubtitleEmbeddingsExtractor(config, series,
                                                                self.embedding_model,
                                                                self.model_dir)

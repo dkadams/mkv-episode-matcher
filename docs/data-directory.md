@@ -88,15 +88,16 @@ The `.mkv-episode-matcher/` directory is organized like this (some items appear 
 │       │   └── embeddings/
 │       │       └── <hashed_source>.npy
 │       └── indexes/
-│           ├── embeddings/
-│           │   ├── interval-subs/
-│           │   │   └── S01E01.srt
-│           │   └── <model-name>/
-│           │       └── <interval>.npy
-│           ├── hnswlib.index/
-│           │   └── <interval>.idx
-│           ├── annoy.index/
-│           │   └── <interval>.idx
+│           └── w<segment>_o<overlap>/
+│               ├── embeddings/
+│               │   ├── interval-subs/
+│               │   │   └── S01E01.srt
+│               │   └── <model-name>/
+│               │       └── <interval>.npy
+│               ├── hnswlib.index/
+│               │   └── <interval>.idx
+│               └── annoy.index/
+│                   └── <interval>.idx
 └── matches/
     └── <timestamp>.jsonl
 ```
@@ -108,9 +109,10 @@ Created by `init-series`. Contains series details and full season/episode metada
 Created by `init-series`. Stores per-series settings:
 
 - `segment_duration` (seconds, default `30`)
+- `subtitle_overlap_seconds` (seconds, default `5`)
 - `random_seed` (default `12345`)
 
-You can override these defaults at init time with `--segment-duration` and `--random-seed`.
+You can override these defaults at init time with `--segment-duration`, `--subtitle-overlap-seconds`, and `--random-seed`.
 
 #### `subtitles/`
 Created by `fetch-subs`. Contains:
@@ -132,13 +134,16 @@ Created when you run `match` or other segment-based operations. The `<segment_du
 #### `segments/<segment_duration>/indexes/`
 Created by `index-subs`. Stores embedding data and index structures used for subtitle matching.
 
-- `embeddings/interval-subs/`
-  - Fixed-interval subtitle files generated from source `.srt` files.
-- `embeddings/<model-name>/`
-  - Embedding arrays per interval (`.npy`).
+- `w<segment>_o<overlap>/`
+  - Window profile directory keyed by segment duration and subtitle overlap.
+  - Example: `w30_o5` for 30-second windows with 5-second overlap.
+- `w<segment>_o<overlap>/embeddings/interval-subs/`
+  - Sliding-window subtitle files generated from source `.srt` files.
+- `w<segment>_o<overlap>/embeddings/<model-name>/`
+  - Embedding arrays per window index (`.npy`).
   - The default model directory is `sentence-transformers-all-MiniLM-L6-v2`.
-- `hnswlib.index/` and `annoy.index/`
-  - Per-interval index files (`.idx`) for the selected index backend.
+- `w<segment>_o<overlap>/hnswlib.index/` and `w<segment>_o<overlap>/annoy.index/`
+  - Per-window index files (`.idx`) for the selected index backend.
 
 #### `matches/`
 Created by `match`. Contains a JSONL file per run with interval-level match results. Filenames are timestamps in ISO format.

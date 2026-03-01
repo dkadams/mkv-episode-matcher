@@ -137,6 +137,12 @@ def add_init_series(subparsers, config_parser, series_dir_parser):
                                   type=int,
                                   help="The number of seconds to use for segmenting episodes (default: 30)",
                                   default=30)
+    init_show_parser.add_argument(
+        "--subtitle-overlap-seconds",
+        type=int,
+        default=5,
+        help="Subtitle window overlap in seconds for indexing/matching (default: 5)",
+    )
     init_show_parser.add_argument("--random-seed",
                                   type=int,
                                   help="The random seed to use for segmenting episodes (default: 12345)",
@@ -166,6 +172,12 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
     index_subs_parser.add_argument("--rebuild",
                                    action="store_true",
                                    help="Rebuild the index from scratch")
+    index_subs_parser.add_argument(
+        "--subtitle-overlap-seconds",
+        type=int,
+        default=None,
+        help="Override subtitle window overlap in seconds (default: series setting or 5)",
+    )
     index_subs_parser.set_defaults(func=index_subtitles)
 
 def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_parser,
@@ -230,6 +242,12 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
         type=int,
         default=None,
         help="Override the segment duration for this collection run",
+    )
+    collect_parser.add_argument(
+        "--subtitle-overlap-seconds",
+        type=int,
+        default=None,
+        help="Override subtitle window overlap in seconds for this collection run",
     )
 
     collect_parser.add_argument(
@@ -301,6 +319,12 @@ def add_evaluate_dataset(subparsers, config_parser):
         help="Override segment duration in seconds (defaults to meta.json or 30)",
     )
     evaluate_parser.add_argument(
+        "--subtitle-overlap-seconds",
+        type=int,
+        default=None,
+        help="Override subtitle window overlap in seconds (defaults to meta.json, series, or 5)",
+    )
+    evaluate_parser.add_argument(
         "--top-k",
         type=int,
         nargs="+",
@@ -354,6 +378,12 @@ def add_match(subparsers, config_parser, index_parser):
                               type=float,
                               default=.5,
                               help="Number of segments to extract per minute (default: .5)")
+    match_parser.add_argument(
+        "--subtitle-overlap-seconds",
+        type=int,
+        default=None,
+        help="Override subtitle window overlap in seconds (default: series setting or 5)",
+    )
 
     match_parser.add_argument('--num-matches','-n',
                               type=int,

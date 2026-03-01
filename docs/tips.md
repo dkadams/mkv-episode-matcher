@@ -78,7 +78,7 @@ Check the logs at:
 
 3. **Speech Recognition**
    - GPU recommended for faster processing
-   - Processing happens in 30s intervals
+   - Processing uses 30s windows with configurable overlap (5s by default)
    - More accurate than OCR-based methods
 
 

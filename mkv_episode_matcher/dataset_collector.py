@@ -12,6 +12,10 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import IndexedEpisodeMatcher
 from mkv_episode_matcher.misalignment import MisalignmentPolicy
 from mkv_episode_matcher.series import Series, SeriesDirectoryProcessor, get_specified_episodes
+from mkv_episode_matcher.windowing import (
+    make_window_config,
+    resolve_subtitle_overlap_seconds,
+)
 
 console = Console()
 
@@ -28,6 +32,8 @@ def collect_dataset(config: Configuration):
 def _collect_series_dataset(config: Configuration, series, all_series_dirs):
     if config.args.segment_duration is not None:
         series = dataclasses.replace(series, segment_duration=config.args.segment_duration)
+    subtitle_overlap_seconds = resolve_subtitle_overlap_seconds(config.args, series)
+    make_window_config(series.segment_duration, subtitle_overlap_seconds)
 
     misalign_profiles = list(dict.fromkeys(config.args.misalign_profiles or []))
     if config.args.misalign_min_seconds < 0:
@@ -158,6 +164,7 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
                         "video_path": str(path),
                         "transcription_path": aligned_rel_path,
                         "segment_duration": series.segment_duration,
+                        "subtitle_overlap_seconds": subtitle_overlap_seconds,
                         "segments_per_minute": config.args.segments_per_minute,
                         "duration_minutes": video_info.minutes,
                         "variant_type": "aligned",
@@ -189,6 +196,7 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
                     "video_path": str(path),
                     "transcription_path": str(profile_file.relative_to(output_root)),
                     "segment_duration": series.segment_duration,
+                    "subtitle_overlap_seconds": subtitle_overlap_seconds,
                     "segments_per_minute": config.args.segments_per_minute,
                     "duration_minutes": video_info.minutes,
                     "variant_type": "misaligned",
@@ -220,6 +228,7 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
             "series_name": series.name,
             "source_series_dir": str(series.dir),
             "segment_duration": series.segment_duration,
+            "subtitle_overlap_seconds": subtitle_overlap_seconds,
             "segments_per_minute": config.args.segments_per_minute,
             "random_seed": series.random_seed,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),

@@ -15,6 +15,11 @@ from rich.table import Table
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import SentenceTransformerModel
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.windowing import (
+    make_window_config,
+    map_segment_index_to_window_index,
+    neighbor_window_indexes,
+)
 
 console = Console()
 
@@ -52,6 +57,10 @@ def evaluate_dataset(config: Configuration):
         dataset_dir,
         config.args.segment_duration,
     )
+    subtitle_overlap_seconds = _resolve_subtitle_overlap_seconds(
+        dataset_dir,
+        config.args.subtitle_overlap_seconds,
+    )
     top_ks = sorted({k for k in config.args.top_k if k > 0})
     if not top_ks:
         raise ValueError("At least one positive --top-k value is required")
@@ -76,6 +85,7 @@ def evaluate_dataset(config: Configuration):
         subtitle_vectors = _build_subtitle_vectors(
             dataset_paths.subtitles_dir,
             interval_seconds,
+            subtitle_overlap_seconds,
             model,
             progress=progress,
         )
@@ -85,6 +95,8 @@ def evaluate_dataset(config: Configuration):
             model=model,
             top_ks=top_ks,
             max_failures=config.args.show_failures,
+            segment_duration_seconds=interval_seconds,
+            subtitle_overlap_seconds=subtitle_overlap_seconds,
             progress=progress,
         )
 
@@ -100,12 +112,15 @@ def evaluate_dataset(config: Configuration):
                 model=model,
                 top_ks=top_ks,
                 max_failures=config.args.show_failures,
+                segment_duration_seconds=interval_seconds,
+                subtitle_overlap_seconds=subtitle_overlap_seconds,
             )
         report["by_profile"] = by_profile
 
     report.update({
         "dataset_dir": str(dataset_dir),
         "segment_duration": interval_seconds,
+        "subtitle_overlap_seconds": subtitle_overlap_seconds,
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
     })
     _print_report(report, top_ks)
@@ -127,6 +142,17 @@ def _resolve_segment_duration(dataset_dir: Path, override: int | None) -> int:
     with meta_path.open("r", encoding="utf-8") as meta_in:
         meta = json.load(meta_in)
     return int(meta.get("segment_duration", 30))
+
+
+def _resolve_subtitle_overlap_seconds(dataset_dir: Path, override: int | None) -> int:
+    if override is not None:
+        return int(override)
+    meta_path = dataset_dir / "meta.json"
+    if not meta_path.exists():
+        return 5
+    with meta_path.open("r", encoding="utf-8") as meta_in:
+        meta = json.load(meta_in)
+    return int(meta.get("subtitle_overlap_seconds", 5))
 
 
 def _resolve_dataset_paths(dataset_dir: Path) -> DatasetPaths:
@@ -215,9 +241,11 @@ def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id:
     return segments
 
 
-def _build_subtitle_vectors(subtitles_dir: Path, interval_seconds: int,
+def _build_subtitle_vectors(subtitles_dir: Path, segment_duration_seconds: int,
+    subtitle_overlap_seconds: int,
     model: SentenceTransformerModel,
     progress: Progress | None = None) -> dict[int, tuple[list[EpisodeKey], np.ndarray]]:
+    window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
     vectors_by_interval: dict[int, list[tuple[EpisodeKey, np.ndarray]]] = {}
     srt_paths = sorted(subtitles_dir.rglob("*.srt"))
     build_task = None
@@ -230,7 +258,11 @@ def _build_subtitle_vectors(subtitles_dir: Path, interval_seconds: int,
             if progress and build_task is not None:
                 progress.update(build_task, advance=1)
             continue
-        for interval_index, interval_text in _interval_texts(srt_path, interval_seconds):
+        for interval_index, interval_text in _window_texts(
+            srt_path,
+            window_config.window_seconds,
+            window_config.overlap_seconds,
+        ):
             embedding = model.encode_document(interval_text)
             vectors_by_interval.setdefault(interval_index, []).append(
                 (episode, embedding)
@@ -246,19 +278,21 @@ def _build_subtitle_vectors(subtitles_dir: Path, interval_seconds: int,
     return reduced
 
 
-def _interval_texts(srt_path: Path, interval_seconds: int) -> Iterable[tuple[int, str]]:
+def _window_texts(srt_path: Path, window_seconds: int, overlap_seconds: int) -> Iterable[tuple[int, str]]:
     subs = pysubs2.load(str(srt_path), format_="srt")
     if not subs:
         return
     max_ts = max(int(sub.end) for sub in subs)
-    interval_ms = interval_seconds * 1000
-    interval_count = math.ceil(max_ts / interval_ms)
+    window_config = make_window_config(window_seconds, overlap_seconds)
+    stride_ms = window_config.stride_seconds * 1000
+    window_ms = window_config.window_seconds * 1000
+    interval_count = math.ceil(max_ts / stride_ms)
     for interval_index in range(interval_count):
-        start = interval_index * interval_ms
-        interval = range(start, start + interval_ms)
+        start = interval_index * stride_ms
+        end = start + window_ms
         interval_text = " ".join(
             sub.plaintext for sub in subs
-            if sub.start in interval or sub.end in interval
+            if sub.start < end and sub.end > start
         )
         yield interval_index, interval_text
 
@@ -266,7 +300,10 @@ def _interval_texts(srt_path: Path, interval_seconds: int) -> Iterable[tuple[int
 def _score_segments(segments: list[SegmentRecord],
     subtitle_vectors: dict[int, tuple[list[EpisodeKey], np.ndarray]],
     model: SentenceTransformerModel, top_ks: list[int], max_failures: int,
+    segment_duration_seconds: int = 30,
+    subtitle_overlap_seconds: int = 5,
     progress: Progress | None = None) -> dict:
+    window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
     top_hits = {k: 0 for k in top_ks}
     reciprocal_rank_sum = 0.0
     evaluated = 0
@@ -278,18 +315,46 @@ def _score_segments(segments: list[SegmentRecord],
         score_task = progress.add_task("Scoring transcript segments", total=len(segments))
 
     for segment in segments:
-        interval_data = subtitle_vectors.get(segment.segment_index)
-        if not interval_data:
+        mapped_interval = map_segment_index_to_window_index(
+            segment.segment_index,
+            segment_duration_seconds,
+            window_config.stride_seconds,
+        )
+        candidate_intervals = neighbor_window_indexes(mapped_interval)
+
+        candidate_episodes: list[EpisodeKey] = []
+        candidate_matrices = []
+        for interval_index in candidate_intervals:
+            interval_data = subtitle_vectors.get(interval_index)
+            if not interval_data:
+                continue
+            episodes, matrix = interval_data
+            candidate_episodes.extend(episodes)
+            candidate_matrices.append(matrix)
+
+        if not candidate_matrices:
             missing_interval += 1
             if progress and score_task is not None:
                 progress.update(score_task, advance=1)
             continue
 
-        episodes, matrix = interval_data
+        matrix = np.vstack(candidate_matrices).astype(np.float32)
         query = model.encode_query(segment.transcript_text)
         scores = matrix @ query
-        ranked_indexes = np.argsort(-scores)
-        ranked = [episodes[i] for i in ranked_indexes]
+        per_episode_best: dict[EpisodeKey, float] = {}
+        for episode, score in zip(candidate_episodes, scores):
+            current = per_episode_best.get(episode)
+            score_value = float(score)
+            if current is None or score_value > current:
+                per_episode_best[episode] = score_value
+
+        ranked = [
+            episode
+            for episode, _ in sorted(
+                per_episode_best.items(),
+                key=lambda item: (-item[1], item[0]),
+            )
+        ]
 
         rank = _first_expected_rank(ranked, segment.expected)
         evaluated += 1

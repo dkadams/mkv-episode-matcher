@@ -135,3 +135,73 @@ def test_segments_grouped_by_profile():
     grouped = _segments_by_profile(segments)
     assert set(grouped.keys()) == {"aligned", "left"}
     assert len(grouped["left"]) == 2
+
+
+def test_score_segments_uses_neighbor_windows():
+    segments = [
+        SegmentRecord(
+            segment_index=1,
+            transcript_text="neighbor lookup",
+            expected={EpisodeKey(2, 1)},
+            video_path="video.mkv",
+        )
+    ]
+    subtitle_vectors = {
+        2: (
+            [EpisodeKey(2, 1)],
+            np.array([[1.0, 0.0]], dtype=np.float32),
+        )
+    }
+
+    report = _score_segments(
+        segments=segments,
+        subtitle_vectors=subtitle_vectors,
+        model=DummyModel(),
+        top_ks=[1, 3],
+        max_failures=5,
+        segment_duration_seconds=30,
+        subtitle_overlap_seconds=5,
+    )
+
+    assert report["segments_evaluated"] == 1
+    assert report["accuracy"]["top_1"] == 1.0
+    assert report["segments_missing_interval"] == 0
+
+
+def test_score_segments_dedupes_repeated_episode_candidates():
+    segments = [
+        SegmentRecord(
+            segment_index=0,
+            transcript_text="dedupe",
+            expected={EpisodeKey(1, 2)},
+            video_path="video.mkv",
+        )
+    ]
+    subtitle_vectors = {
+        0: (
+            [EpisodeKey(1, 1), EpisodeKey(1, 1), EpisodeKey(1, 2)],
+            np.array(
+                [
+                    [0.9, 0.0],
+                    [0.8, 0.0],
+                    [0.7, 0.0],
+                ],
+                dtype=np.float32,
+            ),
+        )
+    }
+
+    report = _score_segments(
+        segments=segments,
+        subtitle_vectors=subtitle_vectors,
+        model=DummyModel(),
+        top_ks=[1, 2],
+        max_failures=5,
+        segment_duration_seconds=30,
+        subtitle_overlap_seconds=5,
+    )
+
+    # After per-episode dedupe, rank is 2 (not 3).
+    assert report["accuracy"]["top_1"] == 0.0
+    assert report["accuracy"]["top_2"] == 1.0
+    assert report["mrr"] == 0.5

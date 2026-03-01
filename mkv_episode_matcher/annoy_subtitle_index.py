@@ -12,16 +12,22 @@ from mkv_episode_matcher.indexed_episode_matcher import IntervalMatch
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.subtitle_embeddings_extractor import \
     SubtitleEmbeddingsExtractor
+from mkv_episode_matcher.windowing import (
+    neighbor_window_indexes,
+    map_segment_index_to_window_index,
+)
 
 console = Console()
 
 class AnnoySubtitleIndex(AbstractSubtitleIndex):
     def __init__(self, config, series: Series):
         super().__init__(config, series)
+        if not self.index_dir.exists():
+            self.index_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def index_dir(self):
-        return self.series.index_dir / "annoy.index"
+        return self.profile_dir / "annoy.index"
 
 class AnnoySubtitleIndexWriter(AnnoySubtitleIndex, AbstractSubtitleIndexWriter):
     def build_interval_index(self, embeddings_file: Path):
@@ -49,22 +55,55 @@ class AnnoySubtitleIndexReader(AnnoySubtitleIndex):
         max_results_per_query: int = 10) -> list[IntervalMatch]:
         embeddings = np.load(embeddings_path)
         results: list[IntervalMatch] = []
-        for interval_idx, embedding in zip(embeddings["interval_index"],
-                                           embeddings["embedding"]):
-            index_entry = self.indexes.get(interval_idx)
-            if index_entry is None:
-                logger.warning(f"No index found for interval: {interval_idx}")
+        for segment_index, embedding in zip(embeddings["interval_index"],
+                                            embeddings["embedding"]):
+            mapped_interval = map_segment_index_to_window_index(
+                int(segment_index),
+                self.series.segment_duration,
+                self.window_config.stride_seconds,
+            )
+            candidate_intervals = [
+                idx
+                for idx in neighbor_window_indexes(mapped_interval)
+                if idx in self.indexes
+            ]
+            if not candidate_intervals:
+                logger.warning(f"No index found for segment: {segment_index} mapped to interval: {mapped_interval}")
                 continue
 
-            directory, index = index_entry
-            ids, distances = index.get_nns_by_vector(embedding,
-                                                     max_results_per_query,
-                                                     include_distances=True)
+            per_episode: dict[EpisodeKey, IntervalMatch] = {}
+            for interval_idx in candidate_intervals:
+                index_entry = self.indexes.get(interval_idx)
+                if index_entry is None:
+                    continue
+                directory, index = index_entry
+                ids, distances = index.get_nns_by_vector(
+                    embedding,
+                    max_results_per_query,
+                    include_distances=True,
+                )
+                for id, distance in zip(ids, distances):
+                    episode = directory[id]
+                    candidate = IntervalMatch(
+                        embeddings_path,
+                        int(segment_index),
+                        episode,
+                        interval_idx,
+                        float(distance),
+                    )
+                    existing = per_episode.get(episode)
+                    if existing is None or candidate.distance < existing.distance or (
+                        candidate.distance == existing.distance
+                        and candidate.episode_index < existing.episode_index
+                    ):
+                        per_episode[episode] = candidate
 
-            results.extend(IntervalMatch(embeddings_path, interval_idx,
-                                         directory[id], interval_idx,
-                                         distance)
-                           for id, distance in zip(ids, distances))
+            if per_episode:
+                deduped = sorted(
+                    per_episode.values(),
+                    key=lambda match: (match.distance, match.episode_index, match.episode),
+                )[:max_results_per_query]
+                results.extend(deduped)
 
         return results
 

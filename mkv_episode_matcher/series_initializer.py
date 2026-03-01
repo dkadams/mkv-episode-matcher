@@ -8,6 +8,7 @@ from mkv_episode_matcher.series import SERIES_DEFAULT_SETTINGS
 from mkv_episode_matcher.series_ui import print_series_results, series_id_prompt
 from mkv_episode_matcher.tmdb_client import fetch_series_detail, search_series, \
     fetch_season_details
+from mkv_episode_matcher.windowing import make_window_config
 
 console = Console()
 
@@ -56,8 +57,14 @@ class SeriesInitializer:
         series_settings = SERIES_DEFAULT_SETTINGS.copy()
         if self.config.args.segment_duration:
             series_settings["segment_duration"] = self.config.args.segment_duration
+        if self.config.args.subtitle_overlap_seconds is not None:
+            series_settings["subtitle_overlap_seconds"] = self.config.args.subtitle_overlap_seconds
         if self.config.args.random_seed:
             series_settings["random_seed"] = self.config.args.random_seed
+        make_window_config(
+            int(series_settings["segment_duration"]),
+            int(series_settings["subtitle_overlap_seconds"]),
+        )
 
         series_settings_file = self.series_dot_dir / "settings.json"
         logger.info(f"Writing series settings to {series_settings_file}")

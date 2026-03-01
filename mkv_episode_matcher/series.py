@@ -15,6 +15,7 @@ from mkv_episode_matcher.utils import unique_filename
 
 SERIES_DEFAULT_SETTINGS = {
     "segment_duration": 30,
+    "subtitle_overlap_seconds": 5,
     "random_seed": 12345
 }
 
@@ -29,6 +30,7 @@ class Series:
 
     segment_duration: int
     random_seed: int
+    subtitle_overlap_seconds: int = SERIES_DEFAULT_SETTINGS["subtitle_overlap_seconds"]
 
     @property
     def dot_dir(self) -> Path:
@@ -95,9 +97,13 @@ class Series:
         random_seed = settings.get(
             "random_seed", SERIES_DEFAULT_SETTINGS["random_seed"]
         )
+        subtitle_overlap_seconds = settings.get(
+            "subtitle_overlap_seconds",
+            SERIES_DEFAULT_SETTINGS["subtitle_overlap_seconds"],
+        )
 
         return Series(series_dir, series_detail, series_name,
-                      segment_duration, random_seed)
+                      segment_duration, random_seed, subtitle_overlap_seconds)
 
     def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
         season_detail = self.detail[f"season/{episode.season_number}"]
