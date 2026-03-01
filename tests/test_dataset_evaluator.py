@@ -4,6 +4,7 @@ from rich.progress import Progress
 from mkv_episode_matcher.dataset_evaluator import (
     DatasetPaths,
     IntervalSubtitleIndex,
+    SubtitleWindowMetadata,
     SegmentRecord,
     _filter_records_by_profiles,
     _first_expected_rank,
@@ -12,6 +13,7 @@ from mkv_episode_matcher.dataset_evaluator import (
     _resolve_dataset_paths,
     _segments_by_profile,
     _score_segments,
+    _write_errors_output,
 )
 from mkv_episode_matcher.episode import EpisodeKey
 
@@ -65,6 +67,7 @@ def test_score_segments_counts_multi_episode_hit_in_top_k():
         model=DummyModel(),
         top_ks=[1, 3],
         max_failures=5,
+        low_info_filter=False,
     )
 
     assert report["segments_total"] == 1
@@ -167,6 +170,7 @@ def test_score_segments_uses_neighbor_windows():
         max_failures=5,
         segment_duration_seconds=30,
         subtitle_overlap_seconds=5,
+        low_info_filter=False,
     )
 
     assert report["segments_evaluated"] == 1
@@ -198,9 +202,134 @@ def test_score_segments_dedupes_repeated_episode_candidates():
         max_failures=5,
         segment_duration_seconds=30,
         subtitle_overlap_seconds=5,
+        low_info_filter=False,
     )
 
     # After per-episode dedupe, rank is 2 (not 3).
     assert report["accuracy"]["top_1"] == 0.0
     assert report["accuracy"]["top_2"] == 1.0
     assert report["mrr"] == 0.5
+
+
+def test_score_segments_include_match_text_in_mismatch_output():
+    segments = [
+        SegmentRecord(
+            segment_index=0,
+            transcript_text="who is this",
+            expected={EpisodeKey(1, 1)},
+            video_path="video.mkv",
+        )
+    ]
+    subtitle_indexes = {
+        0: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(1, 2), EpisodeKey(1, 1)],
+            index=FakeAnnIndex(ids=[0, 1], distances=[0.1, 0.2]),
+            metadata=[
+                SubtitleWindowMetadata(
+                    episode=EpisodeKey(1, 2),
+                    start_ms=0,
+                    end_ms=30000,
+                    text="wrong-episode subtitle line",
+                    subtitle_path="/tmp/S01E02.srt",
+                ),
+                SubtitleWindowMetadata(
+                    episode=EpisodeKey(1, 1),
+                    start_ms=0,
+                    end_ms=30000,
+                    text="right-episode subtitle line",
+                    subtitle_path="/tmp/S01E01.srt",
+                ),
+            ],
+        )
+    }
+
+    report = _score_segments(
+        segments=segments,
+        subtitle_indexes=subtitle_indexes,
+        model=DummyModel(),
+        top_ks=[1, 2],
+        max_failures=5,
+        include_match_text=True,
+        low_info_filter=False,
+    )
+
+    mismatch = report["top1_mismatches"][0]
+    assert mismatch["top_predictions"][0] == "S01E02"
+    assert mismatch["segment_start_seconds"] == 0
+    assert mismatch["segment_end_seconds"] == 30
+    assert mismatch["segment_start_timestamp"] == "00:00:00"
+    assert mismatch["segment_end_timestamp"] == "00:00:30"
+    assert "top_prediction_matches" in mismatch
+    top_match = mismatch["top_prediction_matches"][0]
+    assert top_match["episode"] == "S01E02"
+    assert top_match["match_windows"][0]["subtitle_text"] == "wrong-episode subtitle line"
+    assert top_match["match_windows"][0]["subtitle_path"] == "/tmp/S01E02.srt"
+
+
+def test_write_errors_output_csv_includes_match_text_column(tmp_path):
+    output_path = tmp_path / "errors.csv"
+    _write_errors_output(
+        output_path,
+        [
+            {
+                "video_path": "video.mkv",
+                "segment_index": 1,
+                "variant_profile": "aligned",
+                "expected": ["S01E01"],
+                "top_predictions": ["S01E02"],
+                "top_prediction_matches": [{"episode": "S01E02", "match_windows": []}],
+                "rank": 2,
+                "transcript_text": "line",
+            }
+        ],
+    )
+    csv_text = output_path.read_text(encoding="utf-8")
+    assert "top_prediction_matches" in csv_text.splitlines()[0]
+    assert "segment_start_timestamp" in csv_text.splitlines()[0]
+    assert "S01E02" in csv_text
+
+
+def test_write_errors_output_html_includes_transcript_and_match_windows(tmp_path):
+    output_path = tmp_path / "errors.html"
+    _write_errors_output(
+        output_path,
+        [
+            {
+                "video_path": "video.mkv",
+                "segment_index": 7,
+                "segment_start_seconds": 210,
+                "segment_end_seconds": 240,
+                "segment_start_timestamp": "00:03:30",
+                "segment_end_timestamp": "00:04:00",
+                "variant_profile": "aligned",
+                "expected": ["S01E01"],
+                "top_predictions": ["S01E02", "S01E01"],
+                "rank": 2,
+                "transcript_text": "hello there",
+                "top_prediction_matches": [
+                    {
+                        "episode": "S01E02",
+                        "score": 0.42,
+                        "support_windows": 2,
+                        "nearest_window_offset": 0,
+                        "match_windows": [
+                            {
+                                "window_start_seconds": 10.0,
+                                "window_end_seconds": 40.0,
+                                "adjusted_distance": 0.42,
+                                "subtitle_text": "subtitle text sample",
+                                "subtitle_path": "/tmp/S01E02.srt",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+    )
+    html_text = output_path.read_text(encoding="utf-8")
+    assert "<html>" in html_text
+    assert "Episode Matcher Mismatch Report" in html_text
+    assert "00:03:30 - 00:04:00" in html_text
+    assert "hello there" in html_text
+    assert "subtitle text sample" in html_text
+    assert "/tmp/S01E02.srt" in html_text
