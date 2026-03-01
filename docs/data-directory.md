@@ -111,8 +111,14 @@ Created by `init-series`. Stores per-series settings:
 - `segment_duration` (seconds, default `30`)
 - `subtitle_overlap_seconds` (seconds, default `5`)
 - `random_seed` (default `12345`)
+- `window_expansion_mode` (`always` or `two-stage`, default `always`)
+- `window_neighbor_radius` (default `1`)
+- `low_info_filter` (default `true`)
+- `low_info_min_words` (default `8`)
+- `low_info_cue_ratio` (default `0.25`)
+- `max_results_per_query` (default `10`)
 
-You can override these defaults at init time with `--segment-duration`, `--subtitle-overlap-seconds`, and `--random-seed`.
+You can override these defaults at init time with `--segment-duration`, `--subtitle-overlap-seconds`, `--random-seed`, and the matching-policy flags documented in `docs/cli.md`.
 
 #### `subtitles/`
 Created by `fetch-subs`. Contains:
@@ -130,6 +136,7 @@ Created when you run `match` or other segment-based operations. The `<segment_du
   - Filenames are based on a hash of the video path plus the original filename.
 - `transcriptions/embeddings/`
   - Per-video embedding arrays created from the transcriptions (`.npy`).
+  - Per-video sidecar metadata (`.meta.json`) containing low-information interval annotations used by runtime filtering.
 
 #### `segments/<segment_duration>/indexes/`
 Created by `index-subs`. Stores embedding data and index structures used for subtitle matching.

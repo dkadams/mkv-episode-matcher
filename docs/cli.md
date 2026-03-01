@@ -51,6 +51,12 @@ Options:
 - `--segment-duration`: Segment duration in seconds (default: `30`)
 - `--subtitle-overlap-seconds`: Subtitle window overlap in seconds (default: `5`)
 - `--random-seed`: Random seed for segment selection (default: `12345`)
+- `--window-expansion-mode {always,two-stage}`: Neighbor-window expansion mode (default: `always`)
+- `--window-neighbor-radius`: Neighbor-window radius (default: `1`)
+- `--low-info-filter` / `--no-low-info-filter`: Enable/disable low-information transcript filtering (default: enabled)
+- `--low-info-min-words`: Minimum token count used by low-information filter (default: `8`)
+- `--low-info-cue-ratio`: Cue-token ratio threshold used by low-information filter (default: `0.25`)
+- `--max-results-per-query`: Max ANN candidates per queried window (default: `10`)
 
 ### `fetch-subs`
 Download subtitles for a series from OpenSubtitles.
@@ -91,6 +97,12 @@ Options:
 
 - `--segments-per-minute`: Controls how many segments are transcribed (default: `0.5`)
 - `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds (default: series setting or `5`)
+- `--window-expansion-mode {always,two-stage}`: Neighbor-window expansion mode (default: series setting or `always`)
+- `--window-neighbor-radius`: Neighbor-window radius (default: series setting or `1`)
+- `--low-info-filter` / `--no-low-info-filter`: Enable/disable low-information transcript filtering (default: series setting or enabled)
+- `--low-info-min-words`: Minimum token count used by low-information filter
+- `--low-info-cue-ratio`: Cue-token ratio threshold used by low-information filter
+- `--max-results-per-query`: Max ANN candidates per queried window (default: series setting or `10`)
 - `--num-matches`, `-n`: Number of top matches to show (default: `5`)
 - `--confidence`: Confidence threshold (default: `0.7`)
 - `--no-transcription-cache`: Disable reusing cached transcriptions
@@ -124,10 +136,21 @@ Options (subset):
 
 - `--segment-duration`: Override segment duration in seconds
 - `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds
+- `--window-expansion-mode {always,two-stage}`: Neighbor-window expansion mode
+- `--window-neighbor-radius`: Neighbor-window radius
+- `--low-info-filter` / `--no-low-info-filter`: Enable/disable low-information transcript filtering
+- `--low-info-min-words`: Minimum token count used by low-information filter
+- `--low-info-cue-ratio`: Cue-token ratio threshold used by low-information filter
+- `--max-results-per-query`: Max ANN candidates per queried window
+- `--support-window-bonus`: Bonus applied per additional supporting window
+- `--support-offset-penalty`: Penalty applied for window offset from mapped interval
 - `--top-k`: Top-k values to report
 - `--profiles`: Variant profiles to include
+- `--errors-output`: Optional path for JSONL/CSV/HTML top-1 mismatch export
+- `--include-match-text`: Include matched subtitle window text/time details in mismatch exports
 
-This command uses indexed ANN retrieval over subtitle windows (hnswlib) with a two-stage strategy (mapped window first, neighbors when confidence is low) and window-offset distance penalties, then checks ranked predictions against manifest labels.
+This command uses indexed ANN retrieval over subtitle windows (hnswlib), support-aware per-episode scoring, and optional low-information transcript filtering before computing Top-k/MRR against manifest labels.
+Mismatch exports include derived segment time ranges (seconds and `HH:MM:SS`) alongside segment indexes.
 
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.
