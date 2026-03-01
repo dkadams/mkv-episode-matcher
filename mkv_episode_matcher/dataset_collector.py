@@ -261,7 +261,7 @@ def _copy_transcription_map(transcriptions: dict[Path, Path], destination_dir: P
         if not transcript_path.exists():
             continue
         dest = destination_dir / transcript_path.name
-        shutil.copy2(transcript_path, dest)
+        shutil.copyfile(transcript_path, dest)
         copied[source_video] = dest
     return copied
 
@@ -293,7 +293,7 @@ def _copy_subtitles(series, subtitles_out: Path, specified_keys, exclusions_path
         if specified_keys and episode_key not in specified_keys:
             continue
         dest = subtitles_out / srt.name
-        shutil.copy2(srt, dest)
+        shutil.copyfile(srt, dest)
         copied += 1
     return copied
 
