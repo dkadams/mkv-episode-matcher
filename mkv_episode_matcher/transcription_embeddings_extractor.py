@@ -7,7 +7,15 @@ from loguru import logger
 
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import EmbeddingModel
+from mkv_episode_matcher.segment_quality import (
+    analyze_segment_quality,
+    write_low_info_sidecar,
+)
 from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.windowing import (
+    resolve_low_info_cue_ratio,
+    resolve_low_info_min_words,
+)
 
 
 class TranscriptionEmbeddingsExtractor:
@@ -16,6 +24,8 @@ class TranscriptionEmbeddingsExtractor:
         self.config = config
         self.series = series
         self.model = model
+        self.low_info_min_words = resolve_low_info_min_words(config.args, series)
+        self.low_info_cue_ratio = resolve_low_info_cue_ratio(config.args, series)
 
     def execute(self, transcription_json: Path) -> Path:
         dtype = self.get_dtype()
@@ -35,7 +45,15 @@ class TranscriptionEmbeddingsExtractor:
 
         logger.info(f"Creating query embeddings for file: {transcription_json}")
         new_embeddings_tuples = []
+        interval_quality = {}
         for id, (interval_index, interval_text) in enumerate(transcribed_intervals.items()):
+            interval_text = str(interval_text)
+            interval_key = int(interval_index)
+            interval_quality[interval_key] = analyze_segment_quality(
+                interval_text,
+                min_words=self.low_info_min_words,
+                cue_ratio_threshold=self.low_info_cue_ratio,
+            )
             digest = hashlib.sha256(interval_text.encode("utf-8")).digest()
             if digest in existing_hashes:
                 continue
@@ -44,7 +62,7 @@ class TranscriptionEmbeddingsExtractor:
 
             digest_array = np.frombuffer(digest, dtype=np.uint8).copy()
             new_embeddings_tuples.append(
-                (id, interval_index, embeddings, digest_array)
+                (id, interval_key, embeddings, digest_array)
             )
             existing_hashes.add(digest)
 
@@ -71,6 +89,12 @@ class TranscriptionEmbeddingsExtractor:
         merged_embeddings['id'] = np.arange(len(merged_embeddings))
 
         np.save(embeddings_file, merged_embeddings)
+        write_low_info_sidecar(
+            embeddings_file,
+            interval_quality=interval_quality,
+            min_words=self.low_info_min_words,
+            cue_ratio_threshold=self.low_info_cue_ratio,
+        )
         logger.info(f"Extracted embeddings for: {transcription_json}")
 
         return embeddings_file
