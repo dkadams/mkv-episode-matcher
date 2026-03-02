@@ -41,6 +41,7 @@ dependencies = [
     "requests>=2.32.3",
     "rich[jupyter]>=13.9.4",
     "sentence-transformers>=5.1.2",
+    "faster-whisper>=1.1.0",
     "tmdb-client>=0.0.1",
     "parakeet-mlx @ git+https://github.com/dkadams/parakeet-mlx.git@21056ef0141ceaff729d20502537f7d7c57ff9f9 ; python_full_version >= '3.10' and sys_platform == 'darwin'",
 ]

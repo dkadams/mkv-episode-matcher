@@ -16,6 +16,7 @@ from mkv_episode_matcher.transcriber_benchmark import (
     benchmark_transcribers,
 )
 from mkv_episode_matcher.transcribers import (
+    FasterWhisperTranscriber,
     ParakeetMlxTranscriber,
     WhispercppTranscriber,
     get_default_transcriber_name,
@@ -314,6 +315,16 @@ def add_collect_dataset(subparsers, config_parser, series_dir_parser, episode_pa
         const=ParakeetMlxTranscriber,
         help=f"Use parakeet-mlx for transcription (macOS only; default on this platform: {default_backend}).",
     )
+    xscriber_group.add_argument(
+        "--faster-whisper",
+        dest="transcriber",
+        action="store_const",
+        const=FasterWhisperTranscriber,
+        help=(
+            "Use faster-whisper batched transcription "
+            f"(default on this platform: {default_backend})."
+        ),
+    )
 
     collect_parser.set_defaults(
         func=collect_dataset,
@@ -552,6 +563,16 @@ def add_match(subparsers, config_parser, index_parser):
         action="store_const",
         const=ParakeetMlxTranscriber,
         help=f"Use parakeet-mlx for transcription (macOS only; default on this platform: {default_backend}).",
+    )
+    xscriber_group.add_argument(
+        "--faster-whisper",
+        dest="transcriber",
+        action="store_const",
+        const=FasterWhisperTranscriber,
+        help=(
+            "Use faster-whisper batched transcription "
+            f"(default on this platform: {default_backend})."
+        ),
     )
 
 

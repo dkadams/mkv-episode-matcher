@@ -337,6 +337,226 @@ class ParakeetMlxTranscriber:
         logger.info("parakeet-mlx debug [{}] {}", phase, payload)
 
 
+FASTER_WHISPER_UNSUPPORTED_MESSAGE = (
+    "faster-whisper dependency is not installed."
+)
+
+
+def is_faster_whisper_supported() -> tuple[bool, str | None]:
+    if importlib.util.find_spec("faster_whisper") is None:
+        return False, FASTER_WHISPER_UNSUPPORTED_MESSAGE
+    return True, None
+
+
+class FasterWhisperTranscriber:
+    """Batch adapter for faster-whisper using BatchedInferencePipeline."""
+
+    DEFAULT_MODEL = "small.en"
+
+    def __init__(self, model_name: str | None):
+        supported, reason = is_faster_whisper_supported()
+        if not supported:
+            raise RuntimeError(reason)
+
+        self.model_name = self._resolve_model_name(model_name)
+        self.device = str(os.environ.get("FASTER_WHISPER_DEVICE", "auto")).strip() or "auto"
+        self.compute_type = (
+            str(os.environ.get("FASTER_WHISPER_COMPUTE_TYPE", "default")).strip() or "default"
+        )
+        self.cpu_threads = self._positive_int_env("FASTER_WHISPER_CPU_THREADS")
+        self.batch_size = max(1, int(os.environ.get("FASTER_WHISPER_BATCH_SIZE", "8")))
+        self.batch_debug = self._is_truthy(os.environ.get("FASTER_WHISPER_BATCH_DEBUG"))
+        self._batch_counter = 0
+        self.pipeline = self._load_pipeline(
+            self.model_name,
+            device=self.device,
+            compute_type=self.compute_type,
+            cpu_threads=self.cpu_threads,
+        )
+
+    @classmethod
+    def _resolve_model_name(cls, model_name: str | None) -> str:
+        if not model_name:
+            return cls.DEFAULT_MODEL
+        resolved = Path(str(model_name)).expanduser()
+        if resolved.exists():
+            return str(resolved)
+        return str(model_name).strip() or cls.DEFAULT_MODEL
+
+    @staticmethod
+    def _is_truthy(value: str | None) -> bool:
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _positive_int_env(name: str) -> int | None:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        value = str(raw).strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            logger.warning(f"Ignoring {name}: expected integer, got '{raw}'")
+            return None
+        if parsed < 1:
+            logger.warning(f"Ignoring {name}: expected value >= 1, got '{parsed}'")
+            return None
+        return parsed
+
+    @staticmethod
+    def _load_pipeline(
+        model_name: str,
+        *,
+        device: str,
+        compute_type: str,
+        cpu_threads: int | None,
+    ):
+        from faster_whisper import BatchedInferencePipeline, WhisperModel
+
+        model_kwargs = {
+            "model_size_or_path": model_name,
+            "device": device,
+            "compute_type": compute_type,
+        }
+        if cpu_threads is not None:
+            model_kwargs["cpu_threads"] = cpu_threads
+
+        model = WhisperModel(**model_kwargs)
+        return BatchedInferencePipeline(model=model)
+
+    def transcribe(self, audio_path: Path):
+        results = self.transcribe_many([audio_path])
+        return results[0] if results else None
+
+    def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
+        if not audio_paths:
+            return []
+
+        results: list[str | None] = []
+        for batch in self._chunked(audio_paths, self.batch_size):
+            batch_id = self._batch_counter
+            self._batch_counter += 1
+            try:
+                results.extend(self._transcribe_batch(batch, batch_id=batch_id))
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "faster-whisper batch transcription failed (batch_id={}, size={}): {}",
+                    batch_id,
+                    len(batch),
+                    exc,
+                )
+                self._debug_batch(
+                    "batch_failure",
+                    {
+                        "batch_id": batch_id,
+                        "size": len(batch),
+                        "paths": [str(path) for path in batch],
+                        "error": str(exc),
+                    },
+                )
+                raise RuntimeError(
+                    "faster-whisper batch transcription failed "
+                    f"(batch_id={batch_id}, size={len(batch)})"
+                ) from exc
+        return results
+
+    @staticmethod
+    def _chunked(paths: list[Path], size: int) -> Iterable[list[Path]]:
+        for i in range(0, len(paths), size):
+            yield paths[i:i + size]
+
+    def _transcribe_batch(self, audio_paths: list[Path], *, batch_id: int) -> list[str | None]:
+        as_strings = [str(Path(path)) for path in audio_paths]
+        self._debug_batch(
+            "pre_transcribe",
+            {
+                "batch_id": batch_id,
+                "size": len(audio_paths),
+                "paths": as_strings,
+            },
+        )
+        raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
+        raw_results = raw[0] if isinstance(raw, tuple) else raw
+        texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
+        self._debug_batch(
+            "post_transcribe",
+            {
+                "batch_id": batch_id,
+                "size": len(audio_paths),
+                "result_count": len(texts),
+                "non_empty_text_count": sum(1 for text in texts if text),
+            },
+        )
+        return texts
+
+    @classmethod
+    def _decode_batched_results(cls, raw_results, *, expected_count: int) -> list[str | None]:
+        if expected_count == 1:
+            if (
+                hasattr(raw_results, "__iter__")
+                and not isinstance(raw_results, (str, bytes, dict))
+            ):
+                rows = list(raw_results)
+                if len(rows) == 1:
+                    return [cls._collect_text(rows[0])]
+                return [cls._collect_text(rows)]
+            return [cls._collect_text(raw_results)]
+
+        rows = list(raw_results)
+        if len(rows) != expected_count:
+            raise RuntimeError(
+                f"Expected {expected_count} batched result rows but received {len(rows)}"
+            )
+        return [cls._collect_text(row) for row in rows]
+
+    @classmethod
+    def _collect_text(cls, item) -> str | None:
+        if item is None:
+            return None
+
+        if hasattr(item, "segments"):
+            item = getattr(item, "segments")
+
+        if isinstance(item, str):
+            normalized = item.strip()
+            return normalized or None
+
+        if isinstance(item, dict):
+            text = item.get("text")
+            normalized = str(text).strip() if text is not None else ""
+            return normalized or None
+
+        if not hasattr(item, "__iter__"):
+            text = getattr(item, "text", None)
+            normalized = str(text).strip() if text else ""
+            return normalized or None
+
+        chunks: list[str] = []
+        for segment in item:
+            if segment is None:
+                continue
+            text = getattr(segment, "text", None)
+            if text is None and isinstance(segment, dict):
+                text = segment.get("text")
+            if text is None and isinstance(segment, str):
+                text = segment
+            if text is None:
+                continue
+            normalized = str(text).strip()
+            if normalized:
+                chunks.append(normalized)
+        if not chunks:
+            return None
+        return " ".join(chunks)
+
+    def _debug_batch(self, phase: str, payload: dict) -> None:
+        if not self.batch_debug:
+            return
+        logger.info("faster-whisper debug [{}] {}", phase, payload)
+
+
 def get_default_transcriber_type() -> type:
     if sys.platform == "darwin":
         return ParakeetMlxTranscriber

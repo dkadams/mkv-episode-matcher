@@ -60,10 +60,12 @@ def test_benchmark_parser_backend_filter():
             "--backend",
             "whispercpp",
             "--backend",
+            "faster-whisper",
+            "--backend",
             "parakeet-mlx",
         ]
     )
-    assert args.backend == ["whispercpp", "parakeet-mlx"]
+    assert args.backend == ["whispercpp", "faster-whisper", "parakeet-mlx"]
 
 
 def test_benchmark_parser_accepts_parakeet_backend():
@@ -77,6 +79,19 @@ def test_benchmark_parser_accepts_parakeet_backend():
         ]
     )
     assert args.backend == ["parakeet-mlx"]
+
+
+def test_benchmark_parser_accepts_faster_whisper_backend():
+    parser = build_args_parser()
+    args = parser.parse_args(
+        [
+            "benchmark-transcribers",
+            "video.mkv",
+            "--backend",
+            "faster-whisper",
+        ]
+    )
+    assert args.backend == ["faster-whisper"]
 
 
 def test_benchmark_parser_rejects_removed_backend():

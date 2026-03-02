@@ -108,7 +108,7 @@ Options:
 - `--no-transcription-cache`: Disable reusing cached transcriptions
 - `--display-by-episode`, `-E`: Show results grouped by episode (default)
 - `--display-by-file`, `-F`: Show results grouped by file
-- `--whispercpp`, `--parakeet-mlx`: Transcriber backend (default: `parakeet-mlx` on macOS, `whispercpp` on other platforms). `parakeet-mlx` is macOS-only.
+- `--whispercpp`, `--faster-whisper`, `--parakeet-mlx`: Transcriber backend (default: `parakeet-mlx` on macOS, `whispercpp` on other platforms). `parakeet-mlx` is macOS-only.
 
 Whisper.cpp runtime tuning (when using `--whispercpp`):
 
@@ -139,6 +139,13 @@ mkv-episode-matcher match /path/to/Series /path/to/videos \
 ```
 
 Use whichever setting yields lower wall-clock time on your hardware.
+
+Faster-whisper runtime tuning (when using `--faster-whisper`):
+
+- `FASTER_WHISPER_BATCH_SIZE`: Max number of audio inputs sent per batched inference call (default: `8`).
+- `FASTER_WHISPER_DEVICE`: Device passed to faster-whisper model init (default: `auto`).
+- `FASTER_WHISPER_COMPUTE_TYPE`: Compute type passed to faster-whisper model init (default: `default`).
+- `FASTER_WHISPER_CPU_THREADS`: Optional CPU thread count override for the model backend.
 
 ### `collect-dataset`
 Collect labeled transcription/subtitle pairs for evaluation.
@@ -188,6 +195,7 @@ Benchmark available transcription backends against one or more input paths.
 ```bash
 mkv-episode-matcher benchmark-transcribers /path/to/videos
 mkv-episode-matcher benchmark-transcribers /path/to/videos --backend whispercpp --backend parakeet-mlx
+mkv-episode-matcher benchmark-transcribers /path/to/videos --backend whispercpp --backend faster-whisper
 ```
 
 Options:
@@ -198,7 +206,7 @@ Options:
 - `--random-seed`: Override random seed for deterministic segment selection (default: series value or `12345`)
 - `--thread-workers`: Thread pool size for subprocess backends (default: `10`)
 - `--process-workers`: Process pool size for Python model backends (default: `8`)
-- `--backend`: Repeatable backend filter (`whispercpp`, `parakeet-mlx`)
+- `--backend`: Repeatable backend filter (`whispercpp`, `faster-whisper`, `parakeet-mlx`)
 
 Notes:
 

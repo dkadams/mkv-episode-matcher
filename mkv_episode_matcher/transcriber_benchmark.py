@@ -24,6 +24,7 @@ from mkv_episode_matcher.indexed_episode_matcher import (
 from mkv_episode_matcher.pipeline_runner import PipelineRunner
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
+    FasterWhisperTranscriber,
     ParakeetMlxTranscriber,
     WhispercppTranscriber,
 )
@@ -37,6 +38,7 @@ DEFAULT_TEXT_EXTRACTOR_MODEL = "small.en"
 
 BENCHMARK_BACKENDS: dict[str, type] = {
     "whispercpp": WhispercppTranscriber,
+    "faster-whisper": FasterWhisperTranscriber,
     "parakeet-mlx": ParakeetMlxTranscriber,
 }
 BENCHMARK_BACKEND_CHOICES = tuple(BENCHMARK_BACKENDS.keys())
