@@ -7,6 +7,8 @@ This project can be run as a CLI container with the same subcommands and flags a
 - The Linux container is intended to use the `whispercpp` transcriber.
 - `parakeet-mlx` is macOS-only and is not supported in Linux containers.
 - `whisper-cli` is built from `whisper.cpp` source in a Docker build stage (default ref: `v1.8.2`) and installed into the final runtime image.
+- The Docker build exposes `whisper.cpp` CMake tuning args for CPU backends (`GGML_BLAS`, `GGML_OPENMP`, SIMD flags, etc.).
+- On `linux/amd64` with Python 3.10+, dependency locking resolves `torch` from the PyTorch CPU wheel index (`download.pytorch.org/whl/cpu`) to avoid CUDA/NVIDIA package downloads in CPU-only deployments.
 - The image includes compiler toolchain packages because `annoy` and `hnswlib` are built from source for `linux/amd64` + Python 3.12.
 - Python dependencies are installed with `uv sync --frozen` from `uv.lock` for reproducible versions.
 - Dockerfile layering installs dependencies before source code, so editing application files does not trigger full dependency reinstalls.
@@ -24,6 +26,30 @@ docker buildx build \
   .
 ```
 
+Ryzen-focused build (OpenBLAS + AVX2/FMA/BMI2 + LTO):
+
+```bash
+docker buildx build \
+  --platform linux/amd64 \
+  --build-arg WHISPERCPP_ENABLE_BLAS=ON \
+  --build-arg WHISPERCPP_BLAS_VENDOR=OpenBLAS \
+  --build-arg WHISPERCPP_ENABLE_OPENMP=ON \
+  --build-arg WHISPERCPP_ENABLE_LTO=ON \
+  --build-arg WHISPERCPP_FORCE_AVX2=ON \
+  --build-arg WHISPERCPP_ENABLE_NATIVE=OFF \
+  --load \
+  -t mkv-episode-matcher:local \
+  .
+```
+
+If you build directly on the target Ryzen host (not a generic/shared builder), you can experiment with:
+
+```bash
+--build-arg WHISPERCPP_ENABLE_NATIVE=ON
+```
+
+`WHISPERCPP_ENABLE_NATIVE=ON` may improve performance on that exact CPU, but reduces portability of the image across other x86_64 machines.
+
 ## Build and Push for x64 (amd64)
 
 Create/use a buildx builder and push an amd64 image:
@@ -33,10 +59,25 @@ docker buildx create --name mkv-matcher-builder --use --bootstrap
 
 docker buildx build \
   --platform linux/amd64 \
+  --build-arg WHISPERCPP_ENABLE_BLAS=ON \
+  --build-arg WHISPERCPP_BLAS_VENDOR=OpenBLAS \
+  --build-arg WHISPERCPP_ENABLE_OPENMP=ON \
+  --build-arg WHISPERCPP_ENABLE_LTO=ON \
+  --build-arg WHISPERCPP_FORCE_AVX2=ON \
+  --build-arg WHISPERCPP_ENABLE_NATIVE=OFF \
   -t <registry>/<namespace>/mkv-episode-matcher:<tag> \
   --push \
   .
 ```
+
+### Whisper.cpp Build Args
+
+- `WHISPERCPP_ENABLE_BLAS` (`ON`/`OFF`, default `ON`): enables BLAS kernels.
+- `WHISPERCPP_BLAS_VENDOR` (default `OpenBLAS`): BLAS backend vendor passed to CMake.
+- `WHISPERCPP_ENABLE_OPENMP` (`ON`/`OFF`, default `ON`): OpenMP parallelism support.
+- `WHISPERCPP_ENABLE_LTO` (`ON`/`OFF`, default `ON`): link-time optimization.
+- `WHISPERCPP_ENABLE_NATIVE` (`ON`/`OFF`, default `OFF`): `-march=native` style host-targeted build.
+- `WHISPERCPP_FORCE_AVX2` (`ON`/`OFF`, default `ON`): forces x86 SIMD toggles (`SSE4.2`, `AVX`, `AVX2`, `FMA`, `F16C`, `BMI2`) when building `linux/amd64`.
 
 ## Pre-Download + Mount Whisper Models
 
@@ -125,3 +166,11 @@ docker run --rm \
 4. Repeated runs reuse mounted model files without re-downloading.
 5. Config/log/data persist across runs when app-data directory is mounted.
 6. Build fails early with a clear message if `whisper-cli` is missing or has unresolved shared-library dependencies.
+
+## Troubleshooting: Unexpected NVIDIA/CUDA Downloads
+
+If you still see `nvidia-*` or `cuda-*` downloads in Docker for `linux/amd64`, check:
+
+1. You are building with Python 3.10+ (the project Docker image uses Python 3.12).
+2. `uv.lock` is current and includes `torch==...+cpu` from `https://download.pytorch.org/whl/cpu` for non-Darwin Python 3.10+ markers.
+3. The Docker build uses `uv sync --frozen` against the committed lockfile.

@@ -27,8 +27,11 @@ def test_faster_whisper_transcribe_returns_first_item(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribers, "is_faster_whisper_supported", lambda: (True, None))
 
     class DummyPipeline:
-        def transcribe(self, audio_paths, batch_size):
-            assert len(audio_paths) == 1
+        def transcribe(self, audio_input, batch_size):
+            if isinstance(audio_input, list):
+                assert len(audio_input) == 1
+            else:
+                assert isinstance(audio_input, str)
             assert batch_size == 1
             return [SimpleNamespace(text="hello world")], None
 
@@ -49,9 +52,13 @@ def test_faster_whisper_batch_transcribe_many_splits_batches(monkeypatch, tmp_pa
     calls = []
 
     class DummyPipeline:
-        def transcribe(self, audio_paths, batch_size):
-            calls.append((list(audio_paths), batch_size))
-            rows = [[SimpleNamespace(text=f"text-{idx}")] for idx, _ in enumerate(audio_paths)]
+        def transcribe(self, audio_input, batch_size):
+            if isinstance(audio_input, list):
+                payload = list(audio_input)
+            else:
+                payload = [audio_input]
+            calls.append((payload, batch_size))
+            rows = [[SimpleNamespace(text=f"text-{idx}")] for idx, _ in enumerate(payload)]
             return rows, None
 
     monkeypatch.setattr(
@@ -64,11 +71,9 @@ def test_faster_whisper_batch_transcribe_many_splits_batches(monkeypatch, tmp_pa
     paths = [tmp_path / f"chunk_{i}.wav" for i in range(5)]
     texts = transcriber.transcribe_many(paths)
 
-    assert calls == [
-        ([str(paths[0]), str(paths[1])], 2),
-        ([str(paths[2]), str(paths[3])], 2),
-        ([str(paths[4])], 1),
-    ]
+    assert calls[0] == ([str(paths[0]), str(paths[1])], 2)
+    assert calls[1] == ([str(paths[2]), str(paths[3])], 2)
+    assert calls[2] == ([str(paths[4])], 1)
     assert texts == ["text-0", "text-1", "text-0", "text-1", "text-0"]
 
 
@@ -94,3 +99,36 @@ def test_faster_whisper_batch_transcribe_many_handles_batch_failure(monkeypatch,
     paths = [tmp_path / f"chunk_{i}.wav" for i in range(4)]
     with pytest.raises(RuntimeError, match="batch_id=1"):
         transcriber.transcribe_many(paths)
+
+
+def test_faster_whisper_falls_back_when_multi_input_is_unsupported(monkeypatch, tmp_path):
+    monkeypatch.setattr(transcribers, "is_faster_whisper_supported", lambda: (True, None))
+    monkeypatch.setenv("FASTER_WHISPER_BATCH_SIZE", "2")
+    calls = []
+
+    class DummyPipeline:
+        def transcribe(self, audio, batch_size):
+            calls.append((audio, batch_size))
+            if isinstance(audio, list):
+                raise RuntimeError("File object has no read() method, or readable() returned False.")
+            return [SimpleNamespace(text=f"text-{tmp_path.name}")], None
+
+    monkeypatch.setattr(
+        FasterWhisperTranscriber,
+        "_load_pipeline",
+        staticmethod(lambda *_args, **_kwargs: DummyPipeline()),
+    )
+
+    transcriber = FasterWhisperTranscriber(None)
+    paths = [tmp_path / "chunk_0.wav", tmp_path / "chunk_1.wav"]
+    texts = transcriber.transcribe_many(paths)
+
+    assert texts == [f"text-{tmp_path.name}", f"text-{tmp_path.name}"]
+    assert isinstance(calls[0][0], list)
+    assert calls[0][1] == 2
+    # After the first failure, the transcriber should switch to per-path mode.
+    assert all(isinstance(audio, str) for audio, _ in calls[1:])
+    calls_after_fallback = len(calls)
+    transcriber.transcribe_many(paths)
+    assert len(calls) == calls_after_fallback + 2
+    assert all(isinstance(audio, str) for audio, _ in calls[calls_after_fallback:])

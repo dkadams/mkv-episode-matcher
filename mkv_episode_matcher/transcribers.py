@@ -392,6 +392,7 @@ class FasterWhisperTranscriber(Transcriber):
         self.batch_size = max(1, int(os.environ.get("FASTER_WHISPER_BATCH_SIZE", "8")))
         self.batch_debug = self._is_truthy(os.environ.get("FASTER_WHISPER_BATCH_DEBUG"))
         self._batch_counter = 0
+        self._supports_multi_input: bool | None = None
         self.pipeline = self._load_pipeline(
             self.model_name,
             device=self.device,
@@ -502,9 +503,26 @@ class FasterWhisperTranscriber(Transcriber):
                 "paths": as_strings,
             },
         )
-        raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
-        raw_results = raw[0] if isinstance(raw, tuple) else raw
-        texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
+        texts: list[str | None]
+        if len(as_strings) == 1:
+            texts = [self._transcribe_single(as_strings[0])]
+        elif self._supports_multi_input is False:
+            texts = [self._transcribe_single(path) for path in as_strings]
+        else:
+            try:
+                raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
+                raw_results = raw[0] if isinstance(raw, tuple) else raw
+                texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
+                self._supports_multi_input = True
+            except Exception as exc:  # noqa: BLE001
+                if not self._is_multi_input_unsupported(exc):
+                    raise
+                self._supports_multi_input = False
+                logger.warning(
+                    "faster-whisper pipeline rejected multi-input batch mode; "
+                    "falling back to per-path transcription for this process"
+                )
+                texts = [self._transcribe_single(path) for path in as_strings]
         self._debug_batch(
             "post_transcribe",
             {
@@ -515,6 +533,21 @@ class FasterWhisperTranscriber(Transcriber):
             },
         )
         return texts
+
+    def _transcribe_single(self, audio_path: str) -> str | None:
+        raw = self.pipeline.transcribe(audio_path, batch_size=1)
+        raw_results = raw[0] if isinstance(raw, tuple) else raw
+        return self._decode_batched_results(raw_results, expected_count=1)[0]
+
+    @staticmethod
+    def _is_multi_input_unsupported(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return (
+            "no read() method" in message
+            or "readable() returned false" in message
+            or "expected str, bytes or os.pathlike" in message
+            or "path should be string" in message
+        )
 
     @classmethod
     def _decode_batched_results(cls, raw_results, *, expected_count: int) -> list[str | None]:
