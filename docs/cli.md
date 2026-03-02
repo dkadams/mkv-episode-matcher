@@ -147,6 +147,14 @@ Faster-whisper runtime tuning (when using `--faster-whisper`):
 - `FASTER_WHISPER_COMPUTE_TYPE`: Compute type passed to faster-whisper model init (default: `default`).
 - `FASTER_WHISPER_CPU_THREADS`: Optional CPU thread count override for the model backend.
 
+Transcription scheduler micro-batching:
+
+- `MEM_TRANSCRIBE_MICROBATCH_SIZE`: Global Stage-B micro-batch size override (integer >= 1).
+  If unset, each backend default is used (`1` for non-batch backends such as `whispercpp`,
+  `8` for batch backends such as `parakeet-mlx` and `faster-whisper`).
+- `MEM_TRANSCRIBE_MICROBATCH_MAX_WAIT_MS`: Max wait time before flushing a partial Stage-B batch
+  (default: `15` ms).
+
 ### `collect-dataset`
 Collect labeled transcription/subtitle pairs for evaluation.
 

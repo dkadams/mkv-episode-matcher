@@ -22,15 +22,15 @@ from mkv_episode_matcher.pipeline_types import (
     FilePipelineMetrics,
     PipelineRunResult,
     SegmentRequest,
+    TranscriptionResultEvent,
 )
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.transcribers import (
-    ParakeetMlxTranscriber,
     SubprocessTranscriber,
 )
 from mkv_episode_matcher.transcription_worker import (
     _init_transcription_worker,
-    _transcribe_segment_task_worker,
+    _transcribe_segment_batch_task_worker,
 )
 
 
@@ -90,7 +90,7 @@ class PipelineRunner:
         queue_size = max(1, io_workers * 8)
         file_queue: queue.Queue[list[SegmentRequest] | None] = queue.Queue()
         task_queue: queue.Queue[ChunkTask | None] = queue.Queue(maxsize=queue_size)
-        result_queue: queue.Queue[tuple[Future, ChunkTask] | None] = queue.Queue()
+        result_queue: queue.Queue[tuple[Future, list[ChunkTask]] | None] = queue.Queue()
         delete_queue: queue.Queue[tuple[Path, Path] | None] = queue.Queue(maxsize=queue_size)
         chunk_refcounts: dict[Path, int] = {}
         chunk_output_paths: dict[Path, Path] = {}
@@ -142,19 +142,75 @@ class PipelineRunner:
                     wait_elapsed = time.perf_counter() - wait_before
                     if done_item is None:
                         break
-                    future, task = done_item
-                    completed += 1
+                    future, batch_tasks = done_item
+                    completed += len(batch_tasks)
                     try:
-                        event = future.result()
+                        events = future.result()
                     except Exception as exc:  # noqa: BLE001
                         self._append_failure(
                             result,
                             self._base_failure_payload() | {
                                 "failure_type": "transcribe_future_exception",
                                 "error": str(exc),
+                                "batch_size": len(batch_tasks),
                                 "traceback": traceback.format_exc(),
                             },
                         )
+                        for task in batch_tasks:
+                            self._release_chunk(
+                                chunk_refcounts=chunk_refcounts,
+                                chunk_output_paths=chunk_output_paths,
+                                refcount_lock=refcount_lock,
+                                chunk_path=task.chunk_path,
+                                output_path=task.output_path,
+                                delete_queue=delete_queue,
+                            )
+                        continue
+
+                    if len(events) != len(batch_tasks):
+                        self._append_failure(
+                            result,
+                            self._base_failure_payload() | {
+                                "failure_type": "batch_result_mismatch",
+                                "expected_results": len(batch_tasks),
+                                "actual_results": len(events),
+                            },
+                        )
+                        if len(events) < len(batch_tasks):
+                            missing = batch_tasks[len(events):]
+                            events.extend(
+                                [
+                                    TranscriptionResultEvent(
+                                        video_path=task.video_path,
+                                        output_path=task.output_path,
+                                        segment_index=task.segment_index,
+                                        text=None,
+                                        transcribe_seconds=0.0,
+                                        failure={
+                                            "failure_type": "batch_result_mismatch",
+                                            "video_path": str(task.video_path),
+                                            "segment_index": task.segment_index,
+                                            "chunk_path": str(task.chunk_path),
+                                            "base_offset_seconds": task.base_offset_seconds,
+                                            "effective_offset_seconds": task.effective_offset_seconds,
+                                            "duration_seconds": task.duration_seconds,
+                                        },
+                                    )
+                                    for task in missing
+                                ]
+                            )
+                        else:
+                            events = events[:len(batch_tasks)]
+
+                    for task, event in zip(batch_tasks, events):
+                        metrics = result.metrics_by_output[event.output_path]
+                        metrics.transcribe_seconds += event.transcribe_seconds
+                        metrics.stage_b_result_wait_seconds += wait_elapsed
+                        if event.text:
+                            result.transcripts_by_output[event.output_path][event.segment_index] = event.text
+                            metrics.segments_transcribed += 1
+                        if event.failure:
+                            self._append_failure(result, event.failure)
                         self._release_chunk(
                             chunk_refcounts=chunk_refcounts,
                             chunk_output_paths=chunk_output_paths,
@@ -163,24 +219,6 @@ class PipelineRunner:
                             output_path=task.output_path,
                             delete_queue=delete_queue,
                         )
-                        continue
-
-                    metrics = result.metrics_by_output[event.output_path]
-                    metrics.transcribe_seconds += event.transcribe_seconds
-                    metrics.stage_b_result_wait_seconds += wait_elapsed
-                    if event.text:
-                        result.transcripts_by_output[event.output_path][event.segment_index] = event.text
-                        metrics.segments_transcribed += 1
-                    if event.failure:
-                        self._append_failure(result, event.failure)
-                    self._release_chunk(
-                        chunk_refcounts=chunk_refcounts,
-                        chunk_output_paths=chunk_output_paths,
-                        refcount_lock=refcount_lock,
-                        chunk_path=task.chunk_path,
-                        output_path=task.output_path,
-                        delete_queue=delete_queue,
-                    )
 
                 for thread in io_threads:
                     thread.join()
@@ -296,7 +334,7 @@ class PipelineRunner:
     def _dispatch_transcribe_tasks(
         self,
         task_queue: queue.Queue[ChunkTask | None],
-        result_queue: queue.Queue[tuple[Future, ChunkTask] | None],
+        result_queue: queue.Queue[tuple[Future, list[ChunkTask]] | None],
         transcribers,
         io_workers: int,
         result: PipelineRunResult,
@@ -304,38 +342,70 @@ class PipelineRunner:
         sentinels = 0
         pending: set[Future] = set()
         pending_lock = threading.Lock()
-        while sentinels < io_workers:
-            task = task_queue.get()
-            if task is None:
-                sentinels += 1
-                continue
+        batch_size = self._microbatch_size()
+        batch_wait_seconds = self._microbatch_max_wait_seconds()
+        batch_buffer: list[ChunkTask] = []
+        batch_started_at: float | None = None
+
+        def submit_batch(tasks: list[ChunkTask]) -> None:
+            if not tasks:
+                return
             submit_before = time.perf_counter()
             try:
-                future = transcribers.submit(_transcribe_segment_task_worker, task)
+                future = transcribers.submit(_transcribe_segment_batch_task_worker, tasks)
             except Exception as exc:  # noqa: BLE001
                 failed = Future()
                 failed.set_exception(exc)
-                result_queue.put((failed, task))
-                continue
+                result_queue.put((failed, list(tasks)))
+                return
             submit_elapsed = time.perf_counter() - submit_before
             with pending_lock:
                 pending.add(future)
-            # Optional feature gate for future SampleTask support path.
-            if self._samples_enabled() and issubclass(self.transcriber_type, ParakeetMlxTranscriber):
-                logger.debug("Sample-task feature gate enabled, but chunk-path mode remains active")
 
-            def _on_done(done: Future, submitted_task: ChunkTask = task) -> None:
+            def _on_done(done: Future, submitted_tasks: list[ChunkTask] = list(tasks)) -> None:
                 with pending_lock:
                     pending.discard(done)
-                result_queue.put((done, submitted_task))
+                result_queue.put((done, submitted_tasks))
 
             future.add_done_callback(_on_done)
+            per_task_submit = submit_elapsed / len(tasks)
             with self._lock:
-                result.metrics_by_output[task.output_path].stage_b_submit_seconds += submit_elapsed
+                for task in tasks:
+                    result.metrics_by_output[task.output_path].stage_b_submit_seconds += per_task_submit
 
             # keep the submit elapsed in logs for observability.
             if submit_elapsed > 0.05:
-                logger.debug(f"Stage B submit took {submit_elapsed:.3f}s")
+                logger.debug(f"Stage B submit took {submit_elapsed:.3f}s for batch of {len(tasks)}")
+
+        while sentinels < io_workers or batch_buffer:
+            if not batch_buffer:
+                task = task_queue.get()
+            else:
+                deadline = (batch_started_at or time.perf_counter()) + batch_wait_seconds
+                timeout = max(0.0, deadline - time.perf_counter())
+                try:
+                    task = task_queue.get(timeout=timeout)
+                except queue.Empty:
+                    submit_batch(batch_buffer)
+                    batch_buffer = []
+                    batch_started_at = None
+                    continue
+
+            if task is None:
+                sentinels += 1
+                if sentinels >= io_workers:
+                    submit_batch(batch_buffer)
+                    batch_buffer = []
+                    batch_started_at = None
+                continue
+
+            if not batch_buffer:
+                batch_started_at = time.perf_counter()
+            batch_buffer.append(task)
+            if len(batch_buffer) >= batch_size:
+                submit_batch(batch_buffer)
+                batch_buffer = []
+                batch_started_at = None
 
         while True:
             with pending_lock:
@@ -498,6 +568,60 @@ class PipelineRunner:
         return int(os.environ.get(env_name, str(default_value)))
 
     @staticmethod
+    def _positive_int_env(name: str) -> int | None:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        value = str(raw).strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            logger.warning(f"Ignoring {name}: expected integer, got '{raw}'")
+            return None
+        if parsed < 1:
+            logger.warning(f"Ignoring {name}: expected value >= 1, got '{parsed}'")
+            return None
+        return parsed
+
+    def _microbatch_size(self) -> int:
+        override = self._positive_int_env("MEM_TRANSCRIBE_MICROBATCH_SIZE")
+        if override is not None:
+            return override
+
+        batch_capable = bool(getattr(self.transcriber_type, "BATCH_CAPABLE", False))
+        if not batch_capable:
+            return 1
+
+        default_size = getattr(self.transcriber_type, "DEFAULT_MICROBATCH_SIZE", 1)
+        try:
+            resolved = int(default_size)
+        except (TypeError, ValueError):
+            resolved = 1
+        return max(1, resolved)
+
+    @staticmethod
+    def _microbatch_max_wait_seconds() -> float:
+        raw = str(os.environ.get("MEM_TRANSCRIBE_MICROBATCH_MAX_WAIT_MS", "15")).strip()
+        if not raw:
+            return 0.015
+        try:
+            ms = float(raw)
+        except ValueError:
+            logger.warning(
+                f"Ignoring MEM_TRANSCRIBE_MICROBATCH_MAX_WAIT_MS: expected number, got '{raw}'"
+            )
+            return 0.015
+        if ms < 0:
+            logger.warning(
+                "Ignoring MEM_TRANSCRIBE_MICROBATCH_MAX_WAIT_MS: expected value >= 0, got '{}'",
+                ms,
+            )
+            return 0.015
+        return ms / 1000.0
+
+    @staticmethod
     def _write_transcript(output: Path, transcribed: dict[int, str]) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         existing_transcript = {}
@@ -513,12 +637,3 @@ class PipelineRunner:
         metrics_path = output.with_suffix(".metrics.json")
         with metrics_path.open("w", encoding="utf-8") as metrics_out:
             json.dump(payload, metrics_out)
-
-    @staticmethod
-    def _samples_enabled() -> bool:
-        return str(os.environ.get("MEM_ENABLE_SAMPLE_TASKS", "")).strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }

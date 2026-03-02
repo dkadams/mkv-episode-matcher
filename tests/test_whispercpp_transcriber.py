@@ -122,3 +122,28 @@ def test_whispercpp_uses_default_threads_when_env_unset(monkeypatch, tmp_path):
         "-of",
         seen["cmd"][-1],
     ]
+
+
+def test_whispercpp_transcribe_many_preserves_order(monkeypatch, tmp_path):
+    model_path = tmp_path / "ggml-small.en.bin"
+    model_path.write_bytes(b"model")
+    audio_paths = [tmp_path / "chunk_a.wav", tmp_path / "chunk_b.wav"]
+    for path in audio_paths:
+        path.write_bytes(b"audio")
+
+    seen_cmds: list[list[str]] = []
+
+    def fake_run(cmd, capture_output, text, check):
+        seen_cmds.append(cmd)
+        input_path = Path(cmd[cmd.index("-f") + 1])
+        output_base = Path(cmd[cmd.index("-of") + 1])
+        output_base.with_suffix(".txt").write_text(f"text-{input_path.stem}", encoding="utf-8")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("mkv_episode_matcher.transcribers.subprocess.run", fake_run)
+
+    transcriber = WhispercppTranscriber(str(model_path))
+    text = transcriber.transcribe_many(audio_paths)
+
+    assert text == ["text-chunk_a", "text-chunk_b"]
+    assert [Path(cmd[cmd.index("-f") + 1]) for cmd in seen_cmds] == audio_paths

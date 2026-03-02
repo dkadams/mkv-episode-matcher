@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from abc import ABC
 import importlib.util
 import os
 import shlex
@@ -12,8 +13,25 @@ from typing import Iterable
 from loguru import logger
 
 
-class SubprocessTranscriber:
-    """Marker base class for backends that run external CLI executables."""
+class Transcriber(ABC):
+    """Base transcription contract used by pipeline workers."""
+
+    BATCH_CAPABLE: bool = True
+    DEFAULT_MICROBATCH_SIZE: int = 8
+
+    def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
+        raise NotImplementedError
+
+    def transcribe(self, audio_path: Path) -> str | None:
+        results = self.transcribe_many([audio_path])
+        return results[0] if results else None
+
+
+class SubprocessTranscriber(Transcriber):
+    """Base class for backends that run external CLI executables."""
+
+    BATCH_CAPABLE = False
+    DEFAULT_MICROBATCH_SIZE = 1
 
 
 class WhispercppTranscriber(SubprocessTranscriber):
@@ -106,7 +124,10 @@ class WhispercppTranscriber(SubprocessTranscriber):
                 logger.warning(f"Ignoring WHISPERCPP_EXTRA_ARGS: {exc}")
         return args
 
-    def transcribe(self, audio_path: Path):
+    def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
+        return [self._transcribe_one(path) for path in audio_paths]
+
+    def _transcribe_one(self, audio_path: Path) -> str | None:
         logger.info(f"Transcribing {audio_path} with whispercpp")
         with tempfile.TemporaryDirectory() as tmpdir:
             output_base = Path(tmpdir) / "whispercpp_transcription"
@@ -163,10 +184,12 @@ def is_parakeet_mlx_supported() -> tuple[bool, str | None]:
     return True, None
 
 
-class ParakeetMlxTranscriber:
+class ParakeetMlxTranscriber(Transcriber):
     """Batch adapter for parakeet-mlx using model.generate()."""
 
     DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
+    BATCH_CAPABLE = True
+    DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str | None):
         supported, reason = is_parakeet_mlx_supported()
@@ -348,10 +371,12 @@ def is_faster_whisper_supported() -> tuple[bool, str | None]:
     return True, None
 
 
-class FasterWhisperTranscriber:
+class FasterWhisperTranscriber(Transcriber):
     """Batch adapter for faster-whisper using BatchedInferencePipeline."""
 
     DEFAULT_MODEL = "small.en"
+    BATCH_CAPABLE = True
+    DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str | None):
         supported, reason = is_faster_whisper_supported()
