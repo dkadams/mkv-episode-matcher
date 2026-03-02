@@ -66,8 +66,9 @@ def match_episodes(config: Configuration):
             continue
 
         console.print(f"[bold green]Processing series: {series.name}, paths: {paths}")
-        matches = IndexedEpisodeMatcher(config, series).match(paths)
-        dump_results(matches, series)
+        matcher = IndexedEpisodeMatcher(config, series)
+        matches = matcher.match(paths)
+        dump_results(matches, series, matcher.resolved_assignments_by_video)
 
         aggregated = aggregate_matches(matches)
         if config.args.display_by_episode:
@@ -78,9 +79,17 @@ def match_episodes(config: Configuration):
         if config.args.display_by_file:
             video_matches = group_matches(config, aggregated,
                                           lambda match: match.video)
-            display_results_by_video(series, video_matches)
+            display_results_by_video(
+                series,
+                video_matches,
+                matcher.resolved_assignments_by_video,
+            )
 
-def dump_results(results: list[IntervalMatch], series: Series):
+def dump_results(
+    results: list[IntervalMatch],
+    series: Series,
+    assignments_by_video: dict[Video, Any] | None = None,
+):
     match_dir = series.ensure_matches_dir()
     ts = (datetime.now().astimezone().isoformat(timespec="milliseconds")
           .replace(":", ""))
@@ -93,6 +102,23 @@ def dump_results(results: list[IntervalMatch], series: Series):
                                  # Remove spaces from separators to compact output
                                  separators=(",", ":")))
             out.write("\n")
+
+    if assignments_by_video:
+        assignment_file = match_dir / f"{ts}.assignments.jsonl"
+        with assignment_file.open("w", encoding="utf-8") as out:
+            for video, assignment in assignments_by_video.items():
+                payload = {
+                    "video_path": str(video.file),
+                    "assignment_mode": assignment.assignment_mode,
+                    "assigned_episodes": [str(ep) for ep in assignment.assigned_episodes],
+                    "split_seconds": assignment.split_seconds,
+                    "assignment_confidence": assignment.assignment_confidence,
+                    "runtime_profile_type": assignment.runtime_profile_type,
+                    "detector_reasons": list(assignment.detector_reasons),
+                    "diagnostics": assignment.diagnostics,
+                }
+                out.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+                out.write("\n")
 
 def aggregate_matches(matches: list[IntervalMatch]) -> list[AggregateMatch]:
     aggregated = {}
@@ -137,11 +163,15 @@ def display_results_by_episode(matches_by_episode: dict[EpisodeKey, list[Aggrega
 
 
 def display_results_by_video(series: Series,
-    matches_by_video: dict[Video, list[AggregateMatch]]):
+    matches_by_video: dict[Video, list[AggregateMatch]],
+    assignments_by_video: dict[Video, Any] | None = None):
     table = Table(title=f"Matches for '{series.name}'")
     table.add_column("Filename")
     table.add_column("Episode Id")
     table.add_column("Correct", justify="center")
+    table.add_column("Assigned")
+    table.add_column("Mode")
+    table.add_column("Split")
     table.add_column("# Matches", style="bold")
     table.add_column("#1", style="magenta")
     table.add_column("#2")
@@ -175,6 +205,15 @@ def display_results_by_video(series: Series,
         if len(formatted_matches) < 5:
             formatted_matches.extend(["-"] * (5 - len(formatted_matches)))
 
+        assignment = assignments_by_video.get(video) if assignments_by_video else None
+        assigned = "-"
+        mode = "-"
+        split = "-"
+        if assignment:
+            assigned = ", ".join(str(ep) for ep in assignment.assigned_episodes) or "-"
+            mode = assignment.assignment_mode
+            split = str(assignment.split_seconds) if assignment.split_seconds is not None else "-"
+
         correct_marker = ""
         match correct_match:
             case True:
@@ -185,6 +224,9 @@ def display_results_by_video(series: Series,
         table.add_row(str(video.file),
                       actual,
                       correct_marker,
+                      assigned,
+                      mode,
+                      split,
                       str(len(matches)),
                       formatted_matches[0],
                       formatted_matches[1],

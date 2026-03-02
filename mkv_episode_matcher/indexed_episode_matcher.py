@@ -12,6 +12,7 @@ from typing import Iterable, Optional, Type
 
 from loguru import logger
 from more_itertools import unique
+import numpy as np
 from rich.console import Console
 from rich.progress import Progress
 
@@ -21,6 +22,16 @@ from mkv_episode_matcher.embedding_worker import \
     _init_embeddings_extractor_worker, _extract_embeddings_from_transcription
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.misalignment import MisalignmentPolicy
+from mkv_episode_matcher.multi_episode_assignment import (
+    MultiEpisodeAssignment,
+    build_runtime_profile,
+    collect_srt_episode_runtimes_minutes,
+    collect_tmdb_episode_runtimes_minutes,
+    detect_multi_episode_candidate,
+    resolve_multi_episode_assignment,
+    resolve_multi_episode_settings,
+)
+from mkv_episode_matcher.segment_quality import load_low_info_intervals
 from mkv_episode_matcher.series import Series
 from mkv_episode_matcher.pipeline_runner import PipelineRunner
 from mkv_episode_matcher.utils import opensubtitles_movie_hash
@@ -60,6 +71,8 @@ class IndexedEpisodeMatcher:
         self.index_cls = config.args.index_type.reader_type
 
         self.text_extractor_model = "small.en"
+        self.resolved_assignments_by_video: dict[Video, MultiEpisodeAssignment] = {}
+        self.resolved_assignments_by_embedding: dict[Path, MultiEpisodeAssignment] = {}
 
     def match(self, paths) -> list[IntervalMatch]:
 
@@ -81,7 +94,12 @@ class IndexedEpisodeMatcher:
             embeddings = self.get_embeddings(progress, transcriptions)
             progress.update(match_progress, advance=33.3333)
 
-            query_results = self.get_query_results(progress, embeddings)
+            query_results = self.get_query_results(
+                progress,
+                embeddings,
+                transcriptions_by_video=transcriptions,
+                video_info_by_path=video_info_by_path,
+            )
             progress.update(match_progress, advance=33.3333)
 
         videos = [Video(file, video_info_by_path[file],
@@ -90,7 +108,13 @@ class IndexedEpisodeMatcher:
                         set(EpisodeKey.from_vid_path(file)))
                   for file in video_files]
 
-        # Update references from embeddings path to video
+        self.resolved_assignments_by_video = {
+            video: assignment
+            for video in videos
+            if (assignment := self.resolved_assignments_by_embedding.get(video.embeddings))
+        }
+
+        # Update references from embeddings path to video.
         return [replace(result, video=video)
                 for video in videos
                 for result in query_results[video.embeddings]]
@@ -318,8 +342,13 @@ class IndexedEpisodeMatcher:
         progress.remove_task(embeddings_progress)
         return embeddings
 
-    def get_query_results(self, progress: Progress,
-        embeddings: PathDict) -> dict[Path, list[IntervalMatch]]:
+    def get_query_results(
+        self,
+        progress: Progress,
+        embeddings: PathDict,
+        transcriptions_by_video: dict[Path, Path],
+        video_info_by_path: dict[Path, VideoInfo],
+    ) -> dict[Path, list[IntervalMatch]]:
         query_progress = progress.add_task(f"Querying for: {self.series.name}",
                                            total=len(embeddings))
 
@@ -328,7 +357,18 @@ class IndexedEpisodeMatcher:
         progress.update(load_index_progress, advance=1)
         progress.remove_task(load_index_progress)
 
-        query_results = {}
+        query_results: dict[Path, list[IntervalMatch]] = {}
+        self.resolved_assignments_by_embedding = {}
+        profile = build_runtime_profile(
+            collect_tmdb_episode_runtimes_minutes(self.series),
+            collect_srt_episode_runtimes_minutes(self.series.subtitles_dir),
+        )
+        multi_settings = resolve_multi_episode_settings(self.config.args, self.series)
+        video_by_embedding = {
+            embeddings[transcription]: video_path
+            for video_path, transcription in transcriptions_by_video.items()
+            if transcription in embeddings
+        }
         with ThreadPoolExecutor(max_workers=10) as executor:
             future_to_file = {
                 executor.submit(index.query_intervals,
@@ -337,11 +377,97 @@ class IndexedEpisodeMatcher:
             }
             for future in as_completed(future_to_file):
                 progress.update(query_progress, advance=1)
-                file = future_to_file[future]
-                query_results[file] = future.result()
+                embeddings_path = future_to_file[future]
+                matches = future.result()
+                query_results[embeddings_path] = matches
+                video_path = video_by_embedding.get(embeddings_path)
+                if video_path is None:
+                    continue
+                video_info = video_info_by_path.get(video_path)
+                transcription_path = transcriptions_by_video.get(video_path)
+                if not video_info or not transcription_path:
+                    continue
+                rows = self._load_segment_rows_for_assignment(index, embeddings_path)
+                fallback_episode = self._resolve_single_best_episode(matches)
+                detection = detect_multi_episode_candidate(
+                    settings=multi_settings,
+                    profile=profile,
+                    video_minutes=float(video_info.minutes),
+                    observed_segments=len(rows),
+                    segments_per_minute=float(self.config.args.segments_per_minute),
+                )
+
+                def query_segment(
+                    embedding: np.ndarray,
+                    mapped_window: int,
+                    neighbor_radius: int,
+                    max_results_per_query: int,
+                ) -> list[tuple[EpisodeKey, float]]:
+                    ranked = index.query_segment_embedding(
+                        embedding=embedding,
+                        mapped_interval=int(mapped_window),
+                        neighbor_radius=int(neighbor_radius),
+                        max_results_per_query=int(max_results_per_query),
+                    )
+                    return [(episode, float(score)) for episode, score, _ in ranked]
+
+                assignment = resolve_multi_episode_assignment(
+                    settings=multi_settings,
+                    detection=detection,
+                    segment_rows=rows,
+                    video_minutes=float(video_info.minutes),
+                    segment_duration_seconds=int(self.series.segment_duration),
+                    stride_seconds=int(index.window_config.stride_seconds),
+                    window_seconds=int(index.window_config.window_seconds),
+                    base_neighbor_radius=int(index.window_neighbor_radius),
+                    max_results_per_query=int(index.max_results_per_query),
+                    query_segment=query_segment,
+                    fallback_single_episode=fallback_episode,
+                )
+                self.resolved_assignments_by_embedding[embeddings_path] = assignment
 
         progress.remove_task(query_progress)
         return query_results
+
+    @staticmethod
+    def _resolve_single_best_episode(matches: list[IntervalMatch]) -> EpisodeKey | None:
+        if not matches:
+            return None
+        score_by_episode: dict[EpisodeKey, tuple[int, float]] = {}
+        for match in matches:
+            count, min_distance = score_by_episode.get(match.episode, (0, float("inf")))
+            score_by_episode[match.episode] = (
+                count + 1,
+                min(float(min_distance), float(match.distance)),
+            )
+        ordered = sorted(
+            score_by_episode.items(),
+            key=lambda row: (-row[1][0], row[1][1], row[0]),
+        )
+        return ordered[0][0] if ordered else None
+
+    @staticmethod
+    def _load_segment_rows_for_assignment(index, embeddings_path: Path) -> list[tuple[int, np.ndarray]]:
+        embeddings = np.load(embeddings_path)
+        rows = [
+            (int(segment_index), embedding)
+            for segment_index, embedding in zip(embeddings["interval_index"], embeddings["embedding"])
+        ]
+        if not getattr(index, "low_info_filter", False):
+            return rows
+
+        low_info_intervals = set()
+        loaded = load_low_info_intervals(embeddings_path)
+        if loaded is not None:
+            low_info_intervals = loaded
+        filtered_rows = [
+            (segment_index, embedding)
+            for segment_index, embedding in rows
+            if int(segment_index) not in low_info_intervals
+        ]
+        if rows and not filtered_rows:
+            return rows
+        return filtered_rows
 
     @staticmethod
     def _collect_files(paths: Iterable[Path]) -> Iterable[Path]:

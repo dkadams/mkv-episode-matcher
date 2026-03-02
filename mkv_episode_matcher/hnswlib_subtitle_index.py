@@ -102,80 +102,13 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                 self.series.segment_duration,
                 self.window_config.stride_seconds,
             )
-
-            per_episode_support = {}
-            mapped_window_distances: list[float] = []
-
-            mapped_entry = self.indexes.get(mapped_interval)
-            if mapped_entry is not None:
-                for episode, raw_distance, interval_idx in self._query_interval(
-                    mapped_entry,
-                    embedding,
-                    mapped_interval,
-                    max_results,
-                ):
-                    mapped_window_distances.append(raw_distance)
-                    adjusted_distance = distance_with_window_penalty(
-                        raw_distance,
-                        interval_idx,
-                        mapped_interval,
-                    )
-                    merge_episode_window_hit(
-                        per_episode_support,
-                        episode,
-                        interval_idx,
-                        adjusted_distance,
-                    )
-
-            should_expand = should_expand_to_neighbor_windows(
-                mapped_window_distances,
-                expansion_mode=self.window_expansion_mode,
+            ranked = self.query_segment_embedding(
+                embedding=embedding,
+                mapped_interval=mapped_interval,
+                max_results_per_query=max_results,
             )
-            if should_expand:
-                for interval_idx in neighbor_window_indexes(
-                    mapped_interval,
-                    radius=self.window_neighbor_radius,
-                ):
-                    if interval_idx == mapped_interval:
-                        continue
-                    index_entry = self.indexes.get(interval_idx)
-                    if index_entry is None:
-                        continue
-                    for episode, raw_distance, candidate_interval in self._query_interval(
-                        index_entry,
-                        embedding,
-                        interval_idx,
-                        max_results,
-                    ):
-                        adjusted_distance = distance_with_window_penalty(
-                            raw_distance,
-                            candidate_interval,
-                            mapped_interval,
-                        )
-                        merge_episode_window_hit(
-                            per_episode_support,
-                            episode,
-                            candidate_interval,
-                            adjusted_distance,
-                        )
-
-            if per_episode_support:
-                ranked = []
-                for episode, support in per_episode_support.items():
-                    score, nearest_offset = support_aware_score(
-                        support,
-                        mapped_interval,
-                        support_window_bonus=self.support_window_bonus,
-                        support_offset_penalty=self.support_offset_penalty,
-                    )
-                    ranked.append((
-                        score,
-                        nearest_offset,
-                        episode,
-                        support.best_window_index,
-                    ))
-                ranked.sort(key=lambda item: (item[0], item[1], item[2]))
-                for score, _, episode, best_window_index in ranked[:max_results]:
+            if ranked:
+                for episode, score, best_window_index in ranked[:max_results]:
                     results.append(
                         IntervalMatch(
                             embeddings_path,
@@ -190,6 +123,102 @@ class HnswlibSubtitleIndexReader(HnswlibSubtitleIndex):
                     f"No index results found for segment: {segment_index} mapped to interval: {mapped_interval}"
                 )
         return results
+
+    def query_segment_embedding(
+        self,
+        embedding: np.ndarray,
+        mapped_interval: int,
+        max_results_per_query: int | None = None,
+        neighbor_radius: int | None = None,
+        allowed_episodes: set[EpisodeKey] | None = None,
+        expansion_mode: str | None = None,
+    ) -> list[tuple[EpisodeKey, float, int]]:
+        max_results = int(max_results_per_query or self.max_results_per_query)
+        radius = int(self.window_neighbor_radius if neighbor_radius is None else neighbor_radius)
+        mode = expansion_mode or self.window_expansion_mode
+
+        per_episode_support = {}
+        mapped_window_distances: list[float] = []
+
+        mapped_entry = self.indexes.get(int(mapped_interval))
+        if mapped_entry is not None:
+            for episode, raw_distance, interval_idx in self._query_interval(
+                mapped_entry,
+                embedding,
+                int(mapped_interval),
+                max_results,
+            ):
+                if allowed_episodes is not None and episode not in allowed_episodes:
+                    continue
+                mapped_window_distances.append(raw_distance)
+                adjusted_distance = distance_with_window_penalty(
+                    raw_distance,
+                    interval_idx,
+                    int(mapped_interval),
+                )
+                merge_episode_window_hit(
+                    per_episode_support,
+                    episode,
+                    interval_idx,
+                    adjusted_distance,
+                )
+
+        should_expand = should_expand_to_neighbor_windows(
+            mapped_window_distances,
+            expansion_mode=mode,
+        )
+        if should_expand:
+            for interval_idx in neighbor_window_indexes(
+                int(mapped_interval),
+                radius=radius,
+            ):
+                if interval_idx == int(mapped_interval):
+                    continue
+                index_entry = self.indexes.get(interval_idx)
+                if index_entry is None:
+                    continue
+                for episode, raw_distance, candidate_interval in self._query_interval(
+                    index_entry,
+                    embedding,
+                    interval_idx,
+                    max_results,
+                ):
+                    if allowed_episodes is not None and episode not in allowed_episodes:
+                        continue
+                    adjusted_distance = distance_with_window_penalty(
+                        raw_distance,
+                        candidate_interval,
+                        int(mapped_interval),
+                    )
+                    merge_episode_window_hit(
+                        per_episode_support,
+                        episode,
+                        candidate_interval,
+                        adjusted_distance,
+                    )
+
+        if not per_episode_support:
+            return []
+
+        ranked = []
+        for episode, support in per_episode_support.items():
+            score, nearest_offset = support_aware_score(
+                support,
+                int(mapped_interval),
+                support_window_bonus=self.support_window_bonus,
+                support_offset_penalty=self.support_offset_penalty,
+            )
+            ranked.append((
+                float(score),
+                int(nearest_offset),
+                episode,
+                int(support.best_window_index),
+            ))
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+        return [
+            (episode, score, best_window_index)
+            for score, _, episode, best_window_index in ranked[:max_results]
+        ]
 
     @staticmethod
     def _query_interval(index_entry: tuple[dict[int, EpisodeKey], hnswlib.Index],
