@@ -1,4 +1,5 @@
 import numpy as np
+import pysubs2
 from rich.progress import Progress
 
 from mkv_episode_matcher.dataset_evaluator import (
@@ -6,6 +7,8 @@ from mkv_episode_matcher.dataset_evaluator import (
     IntervalSubtitleIndex,
     SubtitleWindowMetadata,
     SegmentRecord,
+    _build_subtitle_indexes,
+    _collect_multi_episode_failures,
     _filter_records_by_profiles,
     _first_expected_rank,
     _load_segments_from_records,
@@ -13,13 +16,22 @@ from mkv_episode_matcher.dataset_evaluator import (
     _resolve_dataset_paths,
     _segments_by_profile,
     _score_segments,
+    _score_video_assignments,
     _write_errors_output,
+    _write_multi_episode_failures_output,
 )
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.multi_episode_assignment import MultiEpisodeSettings
 
 
 class DummyModel:
     def encode_query(self, _text: str) -> np.ndarray:
+        return np.array([1.0, 0.0], dtype=np.float32)
+
+
+class DummyEmbedModel:
+    def encode_document(self, text: str) -> np.ndarray:
+        del text
         return np.array([1.0, 0.0], dtype=np.float32)
 
 
@@ -333,3 +345,189 @@ def test_write_errors_output_html_includes_transcript_and_match_windows(tmp_path
     assert "hello there" in html_text
     assert "subtitle text sample" in html_text
     assert "/tmp/S01E02.srt" in html_text
+
+
+def test_write_multi_episode_failures_output_html(tmp_path):
+    output_path = tmp_path / "multi-failures.html"
+    video_report = {
+        "video_mismatches": [
+            {
+                "video_path": "/tmp/show/S01E01-E02.mkv",
+                "transcription_path": "transcriptions/text/file.json",
+                "variant_profile": "aligned",
+                "expected": ["S01E01", "S01E02"],
+                "predicted": ["S01E01"],
+                "assignment_mode": "single",
+                "runtime_profile_type": "regular",
+                "detector_reasons": ["duration_ratio", "segments_ratio"],
+                "diagnostics": {
+                    "reason": "ambiguous_pair_margin",
+                    "margin": 0.01,
+                    "pair_margin_threshold": 0.05,
+                    "best_pair_score": 0.92,
+                    "second_pair_score": 0.93,
+                    "best_split_seconds": 1320,
+                    "best_pair": ["S01E01", "S01E02"],
+                    "chunk1_top": [
+                        {"episode": "S01E01", "mean_loss": 0.12, "hit_ratio": 0.8},
+                    ],
+                    "chunk2_top": [
+                        {"episode": "S01E02", "mean_loss": 0.13, "hit_ratio": 0.75},
+                    ],
+                    "split_evaluated": [1260, 1290, 1320],
+                    "split_candidates": [
+                        {
+                            "split_seconds": 1320,
+                            "pair": ["S01E01", "S01E02"],
+                            "pair_score": 0.92,
+                            "chunk1_segment_count": 22,
+                            "chunk2_segment_count": 21,
+                            "chunk1_top": [
+                                {"episode": "S01E01", "mean_loss": 0.12, "hit_ratio": 0.8},
+                            ],
+                            "chunk2_top": [
+                                {"episode": "S01E02", "mean_loss": 0.13, "hit_ratio": 0.75},
+                            ],
+                        }
+                    ],
+                },
+            }
+        ]
+    }
+    failures = _collect_multi_episode_failures(video_report)
+    assert len(failures) == 1
+
+    _write_multi_episode_failures_output(output_path, failures, pair_margin=0.05)
+
+    html_text = output_path.read_text(encoding="utf-8")
+    assert "Multi-Episode Matching Failures" in html_text
+    assert "ambiguous_pair_margin" in html_text
+    assert "S01E01 -> S01E02" in html_text
+    assert "Split 1320s" in html_text
+
+
+def test_score_video_assignments_includes_video_level_metrics(tmp_path):
+    dataset_dir = tmp_path
+    transcriptions_dir = dataset_dir / "transcriptions" / "text"
+    transcriptions_dir.mkdir(parents=True)
+    (dataset_dir / "subtitles" / "srt").mkdir(parents=True)
+    transcript_path = transcriptions_dir / "video.json"
+    transcript_path.write_text(
+        json_text := "{\"0\":\"hello there\",\"1\":\"general kenobi\"}",
+        encoding="utf-8",
+    )
+    assert json_text
+
+    records = [
+        {
+            "video_path": "/tmp/video.mkv",
+            "episodes": ["S01E01"],
+            "transcription_path": "transcriptions/text/video.json",
+            "duration_minutes": 22.0,
+            "variant_profile": "aligned",
+            "segments_per_minute": 0.5,
+        }
+    ]
+    subtitle_indexes = {
+        0: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(1, 1)],
+            index=FakeAnnIndex(ids=[0], distances=[0.1]),
+        ),
+        1: IntervalSubtitleIndex(
+            episodes=[EpisodeKey(1, 1)],
+            index=FakeAnnIndex(ids=[0], distances=[0.1]),
+        ),
+    }
+    settings = {
+        "window_expansion_mode": "always",
+        "window_neighbor_radius": 1,
+        "low_info_filter": False,
+        "low_info_min_words": 8,
+        "low_info_cue_ratio": 0.25,
+        "max_results_per_query": 10,
+        "multi_episode_settings": MultiEpisodeSettings(mode="off"),
+    }
+
+    report = _score_video_assignments(
+        records=records,
+        dataset_dir=dataset_dir,
+        subtitle_indexes=subtitle_indexes,
+        model=DummyModel(),
+        segment_duration_seconds=30,
+        subtitle_overlap_seconds=5,
+        settings=settings,
+        support_window_bonus=0.012,
+        support_offset_penalty=0.003,
+        include_quarantined_subs=False,
+    )
+
+    assert report["videos_total"] == 1
+    assert "video_exact_order_accuracy" in report
+    assert "video_episode_set_accuracy" in report
+    assert "fallback_to_single_count" in report
+
+
+def _write_simple_srt(path, text: str, duration_seconds: int = 30):
+    subs = pysubs2.SSAFile()
+    subs.append(
+        pysubs2.SSAEvent(
+            start=0,
+            end=int(duration_seconds * 1000),
+            text=text,
+        )
+    )
+    subs.save(str(path), encoding="utf-8", format_="srt")
+
+
+def test_build_subtitle_indexes_excludes_quarantined_by_default(tmp_path):
+    subtitles_dir = tmp_path / "subtitles"
+    subtitles_dir.mkdir(parents=True)
+    _write_simple_srt(subtitles_dir / "Show - S01E01.srt", "episode one")
+    _write_simple_srt(subtitles_dir / "Show - S01E02.srt", "episode two")
+    quality_dir = subtitles_dir / "quality"
+    quality_dir.mkdir(parents=True)
+    (quality_dir / "S01E02.quality.json").write_text(
+        '{"episode":"S01E02","verdict":"quarantined"}',
+        encoding="utf-8",
+    )
+
+    indexes = _build_subtitle_indexes(
+        subtitles_dir,
+        segment_duration_seconds=30,
+        subtitle_overlap_seconds=5,
+        model=DummyEmbedModel(),
+        include_quarantined_subs=False,
+    )
+    episodes = {
+        episode
+        for interval_data in indexes.values()
+        for episode in interval_data.episodes
+    }
+    assert episodes == {EpisodeKey(1, 1)}
+
+
+def test_build_subtitle_indexes_can_include_quarantined(tmp_path):
+    subtitles_dir = tmp_path / "subtitles"
+    subtitles_dir.mkdir(parents=True)
+    _write_simple_srt(subtitles_dir / "Show - S01E01.srt", "episode one")
+    _write_simple_srt(subtitles_dir / "Show - S01E02.srt", "episode two")
+    quality_dir = subtitles_dir / "quality"
+    quality_dir.mkdir(parents=True)
+    (quality_dir / "S01E02.quality.json").write_text(
+        '{"episode":"S01E02","verdict":"quarantined"}',
+        encoding="utf-8",
+    )
+
+    indexes = _build_subtitle_indexes(
+        subtitles_dir,
+        segment_duration_seconds=30,
+        subtitle_overlap_seconds=5,
+        model=DummyEmbedModel(),
+        include_quarantined_subs=True,
+    )
+    episodes = {
+        episode
+        for interval_data in indexes.values()
+        for episode in interval_data.episodes
+    }
+    assert episodes == {EpisodeKey(1, 1), EpisodeKey(1, 2)}

@@ -73,6 +73,64 @@ class SeriesInitializer:
             series_settings["low_info_cue_ratio"] = self.config.args.low_info_cue_ratio
         if self.config.args.max_results_per_query is not None:
             series_settings["max_results_per_query"] = self.config.args.max_results_per_query
+        if self.config.args.subtitle_quality is not None:
+            series_settings["subtitle_quality_enabled"] = self.config.args.subtitle_quality
+        if self.config.args.subtitle_quality_max_candidates is not None:
+            series_settings["subtitle_quality_max_candidates"] = (
+                self.config.args.subtitle_quality_max_candidates
+            )
+        if self.config.args.subtitle_quality_runtime_ratio_max is not None:
+            series_settings["subtitle_quality_runtime_ratio_max"] = (
+                self.config.args.subtitle_quality_runtime_ratio_max
+            )
+        if self.config.args.subtitle_quality_runtime_ratio_min is not None:
+            series_settings["subtitle_quality_runtime_ratio_min"] = (
+                self.config.args.subtitle_quality_runtime_ratio_min
+            )
+        if self.config.args.subtitle_quality_overlap_containment_threshold is not None:
+            series_settings["subtitle_quality_overlap_containment_threshold"] = (
+                self.config.args.subtitle_quality_overlap_containment_threshold
+            )
+        if self.config.args.multi_episode_mode is not None:
+            series_settings["multi_episode_mode"] = self.config.args.multi_episode_mode
+        if self.config.args.multi_episode_duration_ratio_threshold is not None:
+            series_settings["multi_episode_duration_ratio_threshold"] = (
+                self.config.args.multi_episode_duration_ratio_threshold
+            )
+        if self.config.args.multi_episode_segments_ratio_threshold is not None:
+            series_settings["multi_episode_segments_ratio_threshold"] = (
+                self.config.args.multi_episode_segments_ratio_threshold
+            )
+        if self.config.args.multi_episode_min_extra_minutes is not None:
+            series_settings["multi_episode_min_extra_minutes"] = (
+                self.config.args.multi_episode_min_extra_minutes
+            )
+        if self.config.args.multi_episode_min_extra_segments is not None:
+            series_settings["multi_episode_min_extra_segments"] = (
+                self.config.args.multi_episode_min_extra_segments
+            )
+        if self.config.args.multi_episode_split_search_window_seconds is not None:
+            series_settings["multi_episode_split_search_window_seconds"] = (
+                self.config.args.multi_episode_split_search_window_seconds
+            )
+        if self.config.args.multi_episode_min_side_segments is not None:
+            series_settings["multi_episode_min_side_segments"] = (
+                self.config.args.multi_episode_min_side_segments
+            )
+        if self.config.args.multi_episode_candidate_k is not None:
+            series_settings["multi_episode_candidate_k"] = self.config.args.multi_episode_candidate_k
+        if self.config.args.multi_episode_candidate_k_retry is not None:
+            series_settings["multi_episode_candidate_k_retry"] = (
+                self.config.args.multi_episode_candidate_k_retry
+            )
+        if self.config.args.multi_episode_second_half_horizon_multiplier is not None:
+            series_settings["multi_episode_second_half_horizon_multiplier"] = (
+                self.config.args.multi_episode_second_half_horizon_multiplier
+            )
+        if self.config.args.multi_episode_pair_margin is not None:
+            series_settings["multi_episode_pair_margin"] = self.config.args.multi_episode_pair_margin
+        if self.config.args.multi_episode_miss_penalty is not None:
+            series_settings["multi_episode_miss_penalty"] = self.config.args.multi_episode_miss_penalty
         make_window_config(
             int(series_settings["segment_duration"]),
             int(series_settings["subtitle_overlap_seconds"]),

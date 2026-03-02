@@ -11,6 +11,28 @@ from mkv_episode_matcher.hnswlib_subtitle_index import HnswlibSubtitleIndex
 from mkv_episode_matcher.series_initializer import init_series
 from mkv_episode_matcher.subtitle_downloader import download_subtitles
 from mkv_episode_matcher.subtitle_index import index_subtitles
+from mkv_episode_matcher.subtitle_quality import (
+    DEFAULT_SUBTITLE_QUALITY_ENABLED,
+    DEFAULT_SUBTITLE_QUALITY_MAX_CANDIDATES,
+    DEFAULT_SUBTITLE_QUALITY_OVERLAP_CONTAINMENT_THRESHOLD,
+    DEFAULT_SUBTITLE_QUALITY_RUNTIME_RATIO_MAX,
+    DEFAULT_SUBTITLE_QUALITY_RUNTIME_RATIO_MIN,
+)
+from mkv_episode_matcher.multi_episode_assignment import (
+    DEFAULT_MULTI_EPISODE_CANDIDATE_K,
+    DEFAULT_MULTI_EPISODE_CANDIDATE_K_RETRY,
+    DEFAULT_MULTI_EPISODE_DURATION_RATIO_THRESHOLD,
+    DEFAULT_MULTI_EPISODE_MIN_EXTRA_MINUTES,
+    DEFAULT_MULTI_EPISODE_MIN_EXTRA_SEGMENTS,
+    DEFAULT_MULTI_EPISODE_MIN_SIDE_SEGMENTS,
+    DEFAULT_MULTI_EPISODE_MISS_PENALTY,
+    DEFAULT_MULTI_EPISODE_MODE,
+    DEFAULT_MULTI_EPISODE_PAIR_MARGIN,
+    DEFAULT_MULTI_EPISODE_SECOND_HALF_HORIZON_MULTIPLIER,
+    DEFAULT_MULTI_EPISODE_SEGMENTS_RATIO_THRESHOLD,
+    DEFAULT_MULTI_EPISODE_SPLIT_SEARCH_WINDOW_SECONDS,
+    MULTI_EPISODE_MODES,
+)
 from mkv_episode_matcher.transcriber_benchmark import (
     BENCHMARK_BACKEND_CHOICES,
     benchmark_transcribers,
@@ -184,6 +206,108 @@ def add_init_series(subparsers, config_parser, series_dir_parser):
         default=10,
         help="Maximum candidates retrieved per interval query (default: 10)",
     )
+    init_show_parser.add_argument(
+        "--subtitle-quality",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_SUBTITLE_QUALITY_ENABLED,
+        help="Enable subtitle quality checks during fetch-subs",
+    )
+    init_show_parser.add_argument(
+        "--subtitle-quality-max-candidates",
+        type=int,
+        default=DEFAULT_SUBTITLE_QUALITY_MAX_CANDIDATES,
+        help="Maximum candidate subtitles to evaluate per episode",
+    )
+    init_show_parser.add_argument(
+        "--subtitle-quality-runtime-ratio-max",
+        type=float,
+        default=DEFAULT_SUBTITLE_QUALITY_RUNTIME_RATIO_MAX,
+        help="Hard-fail threshold when subtitle runtime ratio exceeds this maximum",
+    )
+    init_show_parser.add_argument(
+        "--subtitle-quality-runtime-ratio-min",
+        type=float,
+        default=DEFAULT_SUBTITLE_QUALITY_RUNTIME_RATIO_MIN,
+        help="Hard-fail threshold when subtitle runtime ratio drops below this minimum",
+    )
+    init_show_parser.add_argument(
+        "--subtitle-quality-overlap-containment-threshold",
+        type=float,
+        default=DEFAULT_SUBTITLE_QUALITY_OVERLAP_CONTAINMENT_THRESHOLD,
+        help="Neighbor subtitle line-containment threshold considered suspicious",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-mode",
+        choices=sorted(MULTI_EPISODE_MODES),
+        default=DEFAULT_MULTI_EPISODE_MODE,
+        help="Multi-episode handling mode for matching/evaluation",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-duration-ratio-threshold",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_DURATION_RATIO_THRESHOLD,
+        help="Duration ratio threshold for auto multi-episode detection",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-segments-ratio-threshold",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_SEGMENTS_RATIO_THRESHOLD,
+        help="Transcribed segment count ratio threshold for auto multi-episode detection",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-min-extra-minutes",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_MIN_EXTRA_MINUTES,
+        help="Minimum extra minutes above expected single runtime for multi detection",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-min-extra-segments",
+        type=int,
+        default=DEFAULT_MULTI_EPISODE_MIN_EXTRA_SEGMENTS,
+        help="Minimum extra transcribed segments above expected single runtime for multi detection",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-split-search-window-seconds",
+        type=int,
+        default=DEFAULT_MULTI_EPISODE_SPLIT_SEARCH_WINDOW_SECONDS,
+        help="Local split search window around expected split (seconds)",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-min-side-segments",
+        type=int,
+        default=DEFAULT_MULTI_EPISODE_MIN_SIDE_SEGMENTS,
+        help="Minimum segment count required on each side of a candidate split",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-candidate-k",
+        type=int,
+        default=DEFAULT_MULTI_EPISODE_CANDIDATE_K,
+        help="Per-chunk episode candidate count before consecutive pair selection",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-candidate-k-retry",
+        type=int,
+        default=DEFAULT_MULTI_EPISODE_CANDIDATE_K_RETRY,
+        help="Retry per-chunk episode candidate count if no consecutive pair is found",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-second-half-horizon-multiplier",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_SECOND_HALF_HORIZON_MULTIPLIER,
+        help="Multiplier for second-half neighbor-window horizon",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-pair-margin",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_PAIR_MARGIN,
+        help="Required margin between best and second-best pair score",
+    )
+    init_show_parser.add_argument(
+        "--multi-episode-miss-penalty",
+        type=float,
+        default=DEFAULT_MULTI_EPISODE_MISS_PENALTY,
+        help="Penalty applied when an episode is missing for a chunk segment",
+    )
     init_show_parser.set_defaults(func=init_series)
 
 
@@ -195,6 +319,41 @@ def add_fetch_subs(subparsers, config_parser, series_dir_parser, episode_parser)
                                               help="Fetch subtitles for a series")
     fetch_subs_parser.add_argument("--refresh", action="store_true",
                                    help="Download subtitles even if they already exist")
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable subtitle quality checks and candidate retry selection",
+    )
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality-max-candidates",
+        type=int,
+        default=None,
+        help="Maximum candidate subtitles to evaluate per episode (default: series setting or 3)",
+    )
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality-runtime-ratio-max",
+        type=float,
+        default=None,
+        help="Runtime ratio hard-fail upper bound (default: series setting or 1.45)",
+    )
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality-runtime-ratio-min",
+        type=float,
+        default=None,
+        help="Runtime ratio hard-fail lower bound (default: series setting or 0.55)",
+    )
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality-overlap-containment-threshold",
+        type=float,
+        default=None,
+        help="Neighbor overlap containment threshold (default: series setting or 0.35)",
+    )
+    fetch_subs_parser.add_argument(
+        "--subtitle-quality-report",
+        default=None,
+        help="Optional JSON path to write subtitle quality summary report",
+    )
     fetch_subs_parser.set_defaults(func=download_subtitles)
 
 def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
@@ -214,6 +373,12 @@ def add_index_subs(subparsers, config_parser, series_dir_parser, episode_parser,
         type=int,
         default=None,
         help="Override subtitle window overlap in seconds (default: series setting or 5)",
+    )
+    index_subs_parser.add_argument(
+        "--include-quarantined-subs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include subtitle files marked as quarantined by subtitle quality checks",
     )
     index_subs_parser.set_defaults(func=index_subtitles)
 
@@ -395,6 +560,13 @@ def add_evaluate_dataset(subparsers, config_parser):
         help="Optional JSONL/CSV path to write per-segment top-1 mismatches",
     )
     evaluate_parser.add_argument(
+        "--multi-failures-output",
+        help=(
+            "Optional HTML path to write detailed multi-episode assignment "
+            "fallback diagnostics"
+        ),
+    )
+    evaluate_parser.add_argument(
         "--include-match-text",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -402,6 +574,12 @@ def add_evaluate_dataset(subparsers, config_parser):
             "Include matched subtitle window text/time details for top predictions "
             "in mismatch and failure outputs"
         ),
+    )
+    evaluate_parser.add_argument(
+        "--include-quarantined-subs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Include subtitle files marked as quarantined by subtitle quality checks",
     )
     evaluate_parser.add_argument(
         "--window-expansion-mode",
@@ -450,6 +628,78 @@ def add_evaluate_dataset(subparsers, config_parser):
         type=float,
         default=0.003,
         help="Penalty per window of offset from mapped interval in support-aware scoring",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-mode",
+        choices=sorted(MULTI_EPISODE_MODES),
+        default=None,
+        help="Multi-episode handling mode (default: series/meta setting or auto)",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-duration-ratio-threshold",
+        type=float,
+        default=None,
+        help="Duration ratio threshold for auto multi-episode detection",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-segments-ratio-threshold",
+        type=float,
+        default=None,
+        help="Transcribed segment ratio threshold for auto multi-episode detection",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-min-extra-minutes",
+        type=float,
+        default=None,
+        help="Minimum extra minutes above expected single runtime for multi detection",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-min-extra-segments",
+        type=int,
+        default=None,
+        help="Minimum extra segments above expected single runtime for multi detection",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-split-search-window-seconds",
+        type=int,
+        default=None,
+        help="Local split search window around expected split in seconds",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-min-side-segments",
+        type=int,
+        default=None,
+        help="Minimum segment count required on each side of a split",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-candidate-k",
+        type=int,
+        default=None,
+        help="Per-chunk episode candidate count for pair selection",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-candidate-k-retry",
+        type=int,
+        default=None,
+        help="Retry candidate count if no consecutive pair is found",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-second-half-horizon-multiplier",
+        type=float,
+        default=None,
+        help="Second-half neighbor-window horizon multiplier",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-pair-margin",
+        type=float,
+        default=None,
+        help="Required score margin between top two candidate pairs",
+    )
+    evaluate_parser.add_argument(
+        "--multi-episode-miss-penalty",
+        type=float,
+        default=None,
+        help="Penalty for chunk segments missing a candidate episode hit",
     )
     evaluate_parser.set_defaults(func=evaluate_dataset)
 
@@ -527,6 +777,78 @@ def add_match(subparsers, config_parser, index_parser):
         type=int,
         default=None,
         help="Maximum candidates retrieved per queried window",
+    )
+    match_parser.add_argument(
+        "--multi-episode-mode",
+        choices=sorted(MULTI_EPISODE_MODES),
+        default=None,
+        help="Multi-episode handling mode (default: series setting or auto)",
+    )
+    match_parser.add_argument(
+        "--multi-episode-duration-ratio-threshold",
+        type=float,
+        default=None,
+        help="Duration ratio threshold for auto multi-episode detection",
+    )
+    match_parser.add_argument(
+        "--multi-episode-segments-ratio-threshold",
+        type=float,
+        default=None,
+        help="Transcribed segment ratio threshold for auto multi-episode detection",
+    )
+    match_parser.add_argument(
+        "--multi-episode-min-extra-minutes",
+        type=float,
+        default=None,
+        help="Minimum extra minutes above expected single runtime for multi detection",
+    )
+    match_parser.add_argument(
+        "--multi-episode-min-extra-segments",
+        type=int,
+        default=None,
+        help="Minimum extra segments above expected single runtime for multi detection",
+    )
+    match_parser.add_argument(
+        "--multi-episode-split-search-window-seconds",
+        type=int,
+        default=None,
+        help="Local split search window around expected split in seconds",
+    )
+    match_parser.add_argument(
+        "--multi-episode-min-side-segments",
+        type=int,
+        default=None,
+        help="Minimum segment count required on each side of a split",
+    )
+    match_parser.add_argument(
+        "--multi-episode-candidate-k",
+        type=int,
+        default=None,
+        help="Per-chunk episode candidate count for pair selection",
+    )
+    match_parser.add_argument(
+        "--multi-episode-candidate-k-retry",
+        type=int,
+        default=None,
+        help="Retry candidate count if no consecutive pair is found",
+    )
+    match_parser.add_argument(
+        "--multi-episode-second-half-horizon-multiplier",
+        type=float,
+        default=None,
+        help="Second-half neighbor-window horizon multiplier",
+    )
+    match_parser.add_argument(
+        "--multi-episode-pair-margin",
+        type=float,
+        default=None,
+        help="Required score margin between top two candidate pairs",
+    )
+    match_parser.add_argument(
+        "--multi-episode-miss-penalty",
+        type=float,
+        default=None,
+        help="Penalty for chunk segments missing a candidate episode hit",
     )
 
     match_parser.add_argument('--num-matches','-n',

@@ -23,6 +23,23 @@ SERIES_DEFAULT_SETTINGS = {
     "low_info_min_words": 8,
     "low_info_cue_ratio": 0.25,
     "max_results_per_query": 10,
+    "subtitle_quality_enabled": True,
+    "subtitle_quality_max_candidates": 3,
+    "subtitle_quality_runtime_ratio_max": 1.45,
+    "subtitle_quality_runtime_ratio_min": 0.55,
+    "subtitle_quality_overlap_containment_threshold": 0.35,
+    "multi_episode_mode": "auto",
+    "multi_episode_duration_ratio_threshold": 1.70,
+    "multi_episode_segments_ratio_threshold": 1.70,
+    "multi_episode_min_extra_minutes": 10.0,
+    "multi_episode_min_extra_segments": 6,
+    "multi_episode_split_search_window_seconds": 180,
+    "multi_episode_min_side_segments": 4,
+    "multi_episode_candidate_k": 10,
+    "multi_episode_candidate_k_retry": 20,
+    "multi_episode_second_half_horizon_multiplier": 1.5,
+    "multi_episode_pair_margin": 0.05,
+    "multi_episode_miss_penalty": 1.20,
 }
 
 console = Console()
@@ -43,6 +60,23 @@ class Series:
     low_info_min_words: int = SERIES_DEFAULT_SETTINGS["low_info_min_words"]
     low_info_cue_ratio: float = SERIES_DEFAULT_SETTINGS["low_info_cue_ratio"]
     max_results_per_query: int = SERIES_DEFAULT_SETTINGS["max_results_per_query"]
+    subtitle_quality_enabled: bool = SERIES_DEFAULT_SETTINGS["subtitle_quality_enabled"]
+    subtitle_quality_max_candidates: int = SERIES_DEFAULT_SETTINGS["subtitle_quality_max_candidates"]
+    subtitle_quality_runtime_ratio_max: float = SERIES_DEFAULT_SETTINGS["subtitle_quality_runtime_ratio_max"]
+    subtitle_quality_runtime_ratio_min: float = SERIES_DEFAULT_SETTINGS["subtitle_quality_runtime_ratio_min"]
+    subtitle_quality_overlap_containment_threshold: float = SERIES_DEFAULT_SETTINGS["subtitle_quality_overlap_containment_threshold"]
+    multi_episode_mode: str = SERIES_DEFAULT_SETTINGS["multi_episode_mode"]
+    multi_episode_duration_ratio_threshold: float = SERIES_DEFAULT_SETTINGS["multi_episode_duration_ratio_threshold"]
+    multi_episode_segments_ratio_threshold: float = SERIES_DEFAULT_SETTINGS["multi_episode_segments_ratio_threshold"]
+    multi_episode_min_extra_minutes: float = SERIES_DEFAULT_SETTINGS["multi_episode_min_extra_minutes"]
+    multi_episode_min_extra_segments: int = SERIES_DEFAULT_SETTINGS["multi_episode_min_extra_segments"]
+    multi_episode_split_search_window_seconds: int = SERIES_DEFAULT_SETTINGS["multi_episode_split_search_window_seconds"]
+    multi_episode_min_side_segments: int = SERIES_DEFAULT_SETTINGS["multi_episode_min_side_segments"]
+    multi_episode_candidate_k: int = SERIES_DEFAULT_SETTINGS["multi_episode_candidate_k"]
+    multi_episode_candidate_k_retry: int = SERIES_DEFAULT_SETTINGS["multi_episode_candidate_k_retry"]
+    multi_episode_second_half_horizon_multiplier: float = SERIES_DEFAULT_SETTINGS["multi_episode_second_half_horizon_multiplier"]
+    multi_episode_pair_margin: float = SERIES_DEFAULT_SETTINGS["multi_episode_pair_margin"]
+    multi_episode_miss_penalty: float = SERIES_DEFAULT_SETTINGS["multi_episode_miss_penalty"]
 
     @property
     def dot_dir(self) -> Path:
@@ -137,6 +171,74 @@ class Series:
             "max_results_per_query",
             SERIES_DEFAULT_SETTINGS["max_results_per_query"],
         )
+        subtitle_quality_enabled = settings.get(
+            "subtitle_quality_enabled",
+            SERIES_DEFAULT_SETTINGS["subtitle_quality_enabled"],
+        )
+        subtitle_quality_max_candidates = settings.get(
+            "subtitle_quality_max_candidates",
+            SERIES_DEFAULT_SETTINGS["subtitle_quality_max_candidates"],
+        )
+        subtitle_quality_runtime_ratio_max = settings.get(
+            "subtitle_quality_runtime_ratio_max",
+            SERIES_DEFAULT_SETTINGS["subtitle_quality_runtime_ratio_max"],
+        )
+        subtitle_quality_runtime_ratio_min = settings.get(
+            "subtitle_quality_runtime_ratio_min",
+            SERIES_DEFAULT_SETTINGS["subtitle_quality_runtime_ratio_min"],
+        )
+        subtitle_quality_overlap_containment_threshold = settings.get(
+            "subtitle_quality_overlap_containment_threshold",
+            SERIES_DEFAULT_SETTINGS["subtitle_quality_overlap_containment_threshold"],
+        )
+        multi_episode_mode = settings.get(
+            "multi_episode_mode",
+            SERIES_DEFAULT_SETTINGS["multi_episode_mode"],
+        )
+        multi_episode_duration_ratio_threshold = settings.get(
+            "multi_episode_duration_ratio_threshold",
+            SERIES_DEFAULT_SETTINGS["multi_episode_duration_ratio_threshold"],
+        )
+        multi_episode_segments_ratio_threshold = settings.get(
+            "multi_episode_segments_ratio_threshold",
+            SERIES_DEFAULT_SETTINGS["multi_episode_segments_ratio_threshold"],
+        )
+        multi_episode_min_extra_minutes = settings.get(
+            "multi_episode_min_extra_minutes",
+            SERIES_DEFAULT_SETTINGS["multi_episode_min_extra_minutes"],
+        )
+        multi_episode_min_extra_segments = settings.get(
+            "multi_episode_min_extra_segments",
+            SERIES_DEFAULT_SETTINGS["multi_episode_min_extra_segments"],
+        )
+        multi_episode_split_search_window_seconds = settings.get(
+            "multi_episode_split_search_window_seconds",
+            SERIES_DEFAULT_SETTINGS["multi_episode_split_search_window_seconds"],
+        )
+        multi_episode_min_side_segments = settings.get(
+            "multi_episode_min_side_segments",
+            SERIES_DEFAULT_SETTINGS["multi_episode_min_side_segments"],
+        )
+        multi_episode_candidate_k = settings.get(
+            "multi_episode_candidate_k",
+            SERIES_DEFAULT_SETTINGS["multi_episode_candidate_k"],
+        )
+        multi_episode_candidate_k_retry = settings.get(
+            "multi_episode_candidate_k_retry",
+            SERIES_DEFAULT_SETTINGS["multi_episode_candidate_k_retry"],
+        )
+        multi_episode_second_half_horizon_multiplier = settings.get(
+            "multi_episode_second_half_horizon_multiplier",
+            SERIES_DEFAULT_SETTINGS["multi_episode_second_half_horizon_multiplier"],
+        )
+        multi_episode_pair_margin = settings.get(
+            "multi_episode_pair_margin",
+            SERIES_DEFAULT_SETTINGS["multi_episode_pair_margin"],
+        )
+        multi_episode_miss_penalty = settings.get(
+            "multi_episode_miss_penalty",
+            SERIES_DEFAULT_SETTINGS["multi_episode_miss_penalty"],
+        )
 
         return Series(series_dir, series_detail, series_name,
                       int(segment_duration),
@@ -147,7 +249,24 @@ class Series:
                       bool(low_info_filter),
                       int(low_info_min_words),
                       float(low_info_cue_ratio),
-                      int(max_results_per_query))
+                      int(max_results_per_query),
+                      bool(subtitle_quality_enabled),
+                      int(subtitle_quality_max_candidates),
+                      float(subtitle_quality_runtime_ratio_max),
+                      float(subtitle_quality_runtime_ratio_min),
+                      float(subtitle_quality_overlap_containment_threshold),
+                      str(multi_episode_mode),
+                      float(multi_episode_duration_ratio_threshold),
+                      float(multi_episode_segments_ratio_threshold),
+                      float(multi_episode_min_extra_minutes),
+                      int(multi_episode_min_extra_segments),
+                      int(multi_episode_split_search_window_seconds),
+                      int(multi_episode_min_side_segments),
+                      int(multi_episode_candidate_k),
+                      int(multi_episode_candidate_k_retry),
+                      float(multi_episode_second_half_horizon_multiplier),
+                      float(multi_episode_pair_margin),
+                      float(multi_episode_miss_penalty))
 
     def get_episode_detail(self, episode: EpisodeKey, keys=None) -> dict[str, str | int]:
         season_detail = self.detail[f"season/{episode.season_number}"]

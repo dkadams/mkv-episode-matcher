@@ -117,6 +117,23 @@ Created by `init-series`. Stores per-series settings:
 - `low_info_min_words` (default `8`)
 - `low_info_cue_ratio` (default `0.25`)
 - `max_results_per_query` (default `10`)
+- `subtitle_quality_enabled` (default `true`)
+- `subtitle_quality_max_candidates` (default `3`)
+- `subtitle_quality_runtime_ratio_max` (default `1.45`)
+- `subtitle_quality_runtime_ratio_min` (default `0.55`)
+- `subtitle_quality_overlap_containment_threshold` (default `0.35`)
+- `multi_episode_mode` (`auto`, `off`, `force-2`; default `auto`)
+- `multi_episode_duration_ratio_threshold` (default `1.70`)
+- `multi_episode_segments_ratio_threshold` (default `1.70`)
+- `multi_episode_min_extra_minutes` (default `10.0`)
+- `multi_episode_min_extra_segments` (default `6`)
+- `multi_episode_split_search_window_seconds` (default `180`)
+- `multi_episode_min_side_segments` (default `4`)
+- `multi_episode_candidate_k` (default `10`)
+- `multi_episode_candidate_k_retry` (default `20`)
+- `multi_episode_second_half_horizon_multiplier` (default `1.5`)
+- `multi_episode_pair_margin` (default `0.05`)
+- `multi_episode_miss_penalty` (default `1.20`)
 
 You can override these defaults at init time with `--segment-duration`, `--subtitle-overlap-seconds`, `--random-seed`, and the matching-policy flags documented in `docs/cli.md`.
 
@@ -125,6 +142,9 @@ Created by `fetch-subs`. Contains:
 
 - `.srt` subtitle files (one per episode)
 - `.opensubtitles` metadata files (JSON payload from OpenSubtitles)
+- `quality/` subtitle-quality artifacts:
+  - `SxxEyy.quality.json`: Per-episode quality diagnostics and verdict (`pass` or `quarantined`)
+  - `quarantine.jsonl`: Append-only quarantine/replacement event log
 
 #### `segments/<segment_duration>/`
 Created when you run `match` or other segment-based operations. The `<segment_duration>` directory name matches the value in `settings.json`. Changing the segment duration creates a new subdirectory.
@@ -153,7 +173,10 @@ Created by `index-subs`. Stores embedding data and index structures used for sub
   - Per-window index files (`.idx`) for the selected index backend.
 
 #### `matches/`
-Created by `match`. Contains a JSONL file per run with interval-level match results. Filenames are timestamps in ISO format.
+Created by `match`. Contains:
+
+- `<timestamp>.jsonl` with interval-level match results.
+- `<timestamp>.assignments.jsonl` with resolved per-video assignment diagnostics (`single` vs `multi_2`, assigned episodes, split, confidence, detector reasons).
 
 ## Notes
 

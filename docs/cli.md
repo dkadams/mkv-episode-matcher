@@ -57,6 +57,18 @@ Options:
 - `--low-info-min-words`: Minimum token count used by low-information filter (default: `8`)
 - `--low-info-cue-ratio`: Cue-token ratio threshold used by low-information filter (default: `0.25`)
 - `--max-results-per-query`: Max ANN candidates per queried window (default: `10`)
+- `--multi-episode-mode {auto,off,force-2}`: Multi-episode handling mode (default: `auto`)
+- `--multi-episode-duration-ratio-threshold`: Duration ratio threshold for auto multi detection (default: `1.70`)
+- `--multi-episode-segments-ratio-threshold`: Segment-count ratio threshold for auto multi detection (default: `1.70`)
+- `--multi-episode-min-extra-minutes`: Minimum extra minutes above expected single runtime (default: `10.0`)
+- `--multi-episode-min-extra-segments`: Minimum extra segments above expected single runtime (default: `6`)
+- `--multi-episode-split-search-window-seconds`: Split search window around expected split (default: `180`)
+- `--multi-episode-min-side-segments`: Minimum segments required on each split side (default: `4`)
+- `--multi-episode-candidate-k`: Per-chunk episode candidate count (default: `10`)
+- `--multi-episode-candidate-k-retry`: Retry candidate count if no consecutive pair is found (default: `20`)
+- `--multi-episode-second-half-horizon-multiplier`: Extra second-half window horizon multiplier (default: `1.5`)
+- `--multi-episode-pair-margin`: Margin required between best and second-best pair score (default: `0.05`)
+- `--multi-episode-miss-penalty`: Penalty for missing chunk/episode hits (default: `1.20`)
 
 ### `fetch-subs`
 Download subtitles for a series from OpenSubtitles.
@@ -68,6 +80,12 @@ mkv-episode-matcher fetch-subs /path/to/Series
 Options:
 
 - `--refresh`: Download even if subtitles exist
+- `--subtitle-quality` / `--no-subtitle-quality`: Enable/disable subtitle quality checks with candidate retry selection (default: enabled)
+- `--subtitle-quality-max-candidates`: Maximum candidate subtitles evaluated per episode (default: `3`)
+- `--subtitle-quality-runtime-ratio-max`: Runtime-ratio hard-fail upper bound vs TMDB runtime (default: `1.45`)
+- `--subtitle-quality-runtime-ratio-min`: Runtime-ratio hard-fail lower bound vs TMDB runtime (default: `0.55`)
+- `--subtitle-quality-overlap-containment-threshold`: Neighbor line-containment suspicious threshold (default: `0.35`)
+- `--subtitle-quality-report`: Optional JSON summary output for subtitle quality evaluations
 - `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
 
 ### `index-subs`
@@ -81,6 +99,7 @@ Options:
 
 - `--rebuild`: Rebuild indexes from scratch
 - `--subtitle-overlap-seconds`: Override subtitle window overlap in seconds (default: series setting or `5`)
+- `--include-quarantined-subs` / `--no-include-quarantined-subs`: Include subtitles marked as quarantined by quality checks (default: excluded)
 - `--annoy`, `--hnswlib`: Select index backend (default: hnswlib)
 - `--seasons <N...>` or `--episodes SEASON:SPEC`: Limit which episodes are processed
 
@@ -103,6 +122,18 @@ Options:
 - `--low-info-min-words`: Minimum token count used by low-information filter
 - `--low-info-cue-ratio`: Cue-token ratio threshold used by low-information filter
 - `--max-results-per-query`: Max ANN candidates per queried window (default: series setting or `10`)
+- `--multi-episode-mode {auto,off,force-2}`: Multi-episode handling mode (default: series setting or `auto`)
+- `--multi-episode-duration-ratio-threshold`: Duration ratio threshold for auto multi detection
+- `--multi-episode-segments-ratio-threshold`: Segment-count ratio threshold for auto multi detection
+- `--multi-episode-min-extra-minutes`: Minimum extra minutes above expected single runtime
+- `--multi-episode-min-extra-segments`: Minimum extra segments above expected single runtime
+- `--multi-episode-split-search-window-seconds`: Split search window around expected split
+- `--multi-episode-min-side-segments`: Minimum segments required on each split side
+- `--multi-episode-candidate-k`: Per-chunk episode candidate count
+- `--multi-episode-candidate-k-retry`: Retry candidate count when no consecutive pair is found
+- `--multi-episode-second-half-horizon-multiplier`: Extra second-half window horizon multiplier
+- `--multi-episode-pair-margin`: Margin required between best and second-best pair score
+- `--multi-episode-miss-penalty`: Penalty for missing chunk/episode hits
 - `--num-matches`, `-n`: Number of top matches to show (default: `5`)
 - `--confidence`: Confidence threshold (default: `0.7`)
 - `--no-transcription-cache`: Disable reusing cached transcriptions
@@ -191,13 +222,27 @@ Options (subset):
 - `--max-results-per-query`: Max ANN candidates per queried window
 - `--support-window-bonus`: Bonus applied per additional supporting window
 - `--support-offset-penalty`: Penalty applied for window offset from mapped interval
+- `--multi-episode-mode {auto,off,force-2}`: Multi-episode handling mode
+- `--multi-episode-duration-ratio-threshold`: Duration ratio threshold for auto multi detection
+- `--multi-episode-segments-ratio-threshold`: Segment-count ratio threshold for auto multi detection
+- `--multi-episode-min-extra-minutes`: Minimum extra minutes above expected single runtime
+- `--multi-episode-min-extra-segments`: Minimum extra segments above expected single runtime
+- `--multi-episode-split-search-window-seconds`: Split search window around expected split
+- `--multi-episode-min-side-segments`: Minimum segments required on each split side
+- `--multi-episode-candidate-k`: Per-chunk episode candidate count
+- `--multi-episode-candidate-k-retry`: Retry candidate count when no consecutive pair is found
+- `--multi-episode-second-half-horizon-multiplier`: Extra second-half window horizon multiplier
+- `--multi-episode-pair-margin`: Margin required between best and second-best pair score
+- `--multi-episode-miss-penalty`: Penalty for missing chunk/episode hits
 - `--top-k`: Top-k values to report
 - `--profiles`: Variant profiles to include
 - `--errors-output`: Optional path for JSONL/CSV/HTML top-1 mismatch export
 - `--include-match-text`: Include matched subtitle window text/time details in mismatch exports
+- `--include-quarantined-subs` / `--no-include-quarantined-subs`: Include subtitles marked as quarantined by quality checks (default: excluded)
 
 This command uses indexed ANN retrieval over subtitle windows (hnswlib), support-aware per-episode scoring, and optional low-information transcript filtering before computing Top-k/MRR against manifest labels.
 Mismatch exports include derived segment time ranges (seconds and `HH:MM:SS`) alongside segment indexes.
+It also reports video-level assignment metrics and diagnostics for split multi-episode resolution (`single` vs `multi_2`) using runtime-profile detection.
 
 ### `benchmark-transcribers`
 Benchmark available transcription backends against one or more input paths.

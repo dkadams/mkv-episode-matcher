@@ -20,7 +20,18 @@ from rich.table import Table
 from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.embedding_model import SentenceTransformerModel
 from mkv_episode_matcher.episode import EpisodeKey
+from mkv_episode_matcher.multi_episode_assignment import (
+    build_runtime_profile,
+    collect_srt_episode_runtimes_minutes,
+    collect_tmdb_episode_runtimes_minutes,
+    detect_multi_episode_candidate,
+    resolve_multi_episode_assignment,
+    resolve_multi_episode_settings,
+)
 from mkv_episode_matcher.segment_quality import analyze_segment_quality
+from mkv_episode_matcher.series import Series
+from mkv_episode_matcher.subtitle_quality import subtitle_file_entries
+from mkv_episode_matcher.subtitle_quality import load_quarantined_episodes
 from mkv_episode_matcher.windowing import (
     DEFAULT_SUPPORT_OFFSET_PENALTY,
     DEFAULT_SUPPORT_WINDOW_BONUS,
@@ -135,6 +146,7 @@ def evaluate_dataset(config: Configuration):
             interval_seconds,
             subtitle_overlap_seconds,
             model,
+            include_quarantined_subs=bool(config.args.include_quarantined_subs),
             progress=progress,
         )
         overall_report = _score_segments(
@@ -156,9 +168,22 @@ def evaluate_dataset(config: Configuration):
             include_match_text=bool(config.args.include_match_text),
             progress=progress,
         )
+        video_report = _score_video_assignments(
+            records=records,
+            dataset_dir=dataset_dir,
+            subtitle_indexes=subtitle_indexes,
+            model=model,
+            segment_duration_seconds=interval_seconds,
+            subtitle_overlap_seconds=subtitle_overlap_seconds,
+            settings=settings,
+            support_window_bonus=float(config.args.support_window_bonus),
+            support_offset_penalty=float(config.args.support_offset_penalty),
+            include_quarantined_subs=bool(config.args.include_quarantined_subs),
+        )
 
     report = {
         "overall": overall_report,
+        "video_level": video_report,
     }
     if config.args.report_by_profile:
         by_profile = {}
@@ -195,6 +220,21 @@ def evaluate_dataset(config: Configuration):
             "low_info_min_words": settings["low_info_min_words"],
             "low_info_cue_ratio": settings["low_info_cue_ratio"],
             "max_results_per_query": settings["max_results_per_query"],
+            "include_quarantined_subs": bool(config.args.include_quarantined_subs),
+            "multi_episode_mode": settings["multi_episode_settings"].mode,
+            "multi_episode_duration_ratio_threshold": settings["multi_episode_settings"].duration_ratio_threshold,
+            "multi_episode_segments_ratio_threshold": settings["multi_episode_settings"].segments_ratio_threshold,
+            "multi_episode_min_extra_minutes": settings["multi_episode_settings"].min_extra_minutes,
+            "multi_episode_min_extra_segments": settings["multi_episode_settings"].min_extra_segments,
+            "multi_episode_split_search_window_seconds": settings["multi_episode_settings"].split_search_window_seconds,
+            "multi_episode_min_side_segments": settings["multi_episode_settings"].min_side_segments,
+            "multi_episode_candidate_k": settings["multi_episode_settings"].candidate_k,
+            "multi_episode_candidate_k_retry": settings["multi_episode_settings"].candidate_k_retry,
+            "multi_episode_second_half_horizon_multiplier": (
+                settings["multi_episode_settings"].second_half_horizon_multiplier
+            ),
+            "multi_episode_pair_margin": settings["multi_episode_settings"].pair_margin,
+            "multi_episode_miss_penalty": settings["multi_episode_settings"].miss_penalty,
             "support_window_bonus": float(config.args.support_window_bonus),
             "support_offset_penalty": float(config.args.support_offset_penalty),
             "retrieval_mode": "indexed_hnswlib_support_aware",
@@ -204,9 +244,18 @@ def evaluate_dataset(config: Configuration):
     _print_report(report, top_ks)
 
     if config.args.errors_output:
+        mismatches = list(overall_report.get("top1_mismatches", []))
+        mismatches.extend(video_report.get("video_mismatches", []))
         _write_errors_output(
             Path(config.args.errors_output).expanduser().resolve(),
-            overall_report.get("top1_mismatches", []),
+            mismatches,
+        )
+    if config.args.multi_failures_output:
+        multi_failures = _collect_multi_episode_failures(video_report)
+        _write_multi_episode_failures_output(
+            Path(config.args.multi_failures_output).expanduser().resolve(),
+            multi_failures,
+            pair_margin=float(settings["multi_episode_settings"].pair_margin),
         )
 
     if config.args.output:
@@ -255,6 +304,18 @@ def _resolve_matching_settings(meta: dict, args) -> dict[str, Any]:
         low_info_min_words=meta.get("low_info_min_words"),
         low_info_cue_ratio=meta.get("low_info_cue_ratio"),
         max_results_per_query=meta.get("max_results_per_query"),
+        multi_episode_mode=meta.get("multi_episode_mode"),
+        multi_episode_duration_ratio_threshold=meta.get("multi_episode_duration_ratio_threshold"),
+        multi_episode_segments_ratio_threshold=meta.get("multi_episode_segments_ratio_threshold"),
+        multi_episode_min_extra_minutes=meta.get("multi_episode_min_extra_minutes"),
+        multi_episode_min_extra_segments=meta.get("multi_episode_min_extra_segments"),
+        multi_episode_split_search_window_seconds=meta.get("multi_episode_split_search_window_seconds"),
+        multi_episode_min_side_segments=meta.get("multi_episode_min_side_segments"),
+        multi_episode_candidate_k=meta.get("multi_episode_candidate_k"),
+        multi_episode_candidate_k_retry=meta.get("multi_episode_candidate_k_retry"),
+        multi_episode_second_half_horizon_multiplier=meta.get("multi_episode_second_half_horizon_multiplier"),
+        multi_episode_pair_margin=meta.get("multi_episode_pair_margin"),
+        multi_episode_miss_penalty=meta.get("multi_episode_miss_penalty"),
     )
     return {
         "window_expansion_mode": resolve_window_expansion_mode(args, series_like),
@@ -263,6 +324,7 @@ def _resolve_matching_settings(meta: dict, args) -> dict[str, Any]:
         "low_info_min_words": resolve_low_info_min_words(args, series_like),
         "low_info_cue_ratio": resolve_low_info_cue_ratio(args, series_like),
         "max_results_per_query": resolve_max_results_per_query(args, series_like),
+        "multi_episode_settings": resolve_multi_episode_settings(args, series_like),
     }
 
 
@@ -355,10 +417,17 @@ def _load_segments_from_records(records: list[dict], dataset_dir: Path, task_id:
 def _build_subtitle_indexes(subtitles_dir: Path, segment_duration_seconds: int,
     subtitle_overlap_seconds: int,
     model: SentenceTransformerModel,
+    include_quarantined_subs: bool = False,
     progress: Progress | None = None) -> dict[int, IntervalSubtitleIndex]:
     window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
     vectors_by_interval: dict[int, list[tuple[EpisodeKey, np.ndarray, SubtitleWindowMetadata]]] = {}
-    srt_paths = sorted(subtitles_dir.rglob("*.srt"))
+    srt_paths = [
+        path
+        for _, path in subtitle_file_entries(
+            subtitles_dir,
+            include_quarantined=include_quarantined_subs,
+        )
+    ]
     build_task = None
     if progress:
         build_task = progress.add_task("Embedding subtitle intervals", total=len(srt_paths))
@@ -653,6 +722,177 @@ def _score_segments(segments: list[SegmentRecord],
     }
 
 
+def _score_video_assignments(
+    *,
+    records: list[dict],
+    dataset_dir: Path,
+    subtitle_indexes: dict[int, IntervalSubtitleIndex],
+    model: SentenceTransformerModel,
+    segment_duration_seconds: int,
+    subtitle_overlap_seconds: int,
+    settings: dict[str, Any],
+    support_window_bonus: float,
+    support_offset_penalty: float,
+    include_quarantined_subs: bool,
+) -> dict[str, Any]:
+    runtime_profile = _build_dataset_runtime_profile(
+        dataset_dir,
+        include_quarantined_subs=include_quarantined_subs,
+    )
+    multi_settings = settings["multi_episode_settings"]
+    window_config = make_window_config(segment_duration_seconds, subtitle_overlap_seconds)
+
+    total = 0
+    exact_order_hits = 0
+    set_hits = 0
+    single_hits = 0
+    single_total = 0
+    detected_multi = 0
+    fallback_to_single = 0
+    mismatches: list[dict[str, Any]] = []
+
+    for payload in records:
+        transcription_rel = payload.get("transcription_path")
+        if not transcription_rel:
+            continue
+        transcription_path = dataset_dir / str(transcription_rel)
+        if not transcription_path.exists():
+            continue
+        with transcription_path.open("r", encoding="utf-8") as transcript_in:
+            transcript_map = json.load(transcript_in)
+
+        rows: list[tuple[int, np.ndarray]] = []
+        for segment_index, transcript_text in transcript_map.items():
+            text = str(transcript_text).strip()
+            if not text:
+                continue
+            try:
+                idx = int(segment_index)
+            except (TypeError, ValueError):
+                continue
+            if settings["low_info_filter"]:
+                quality = analyze_segment_quality(
+                    text,
+                    min_words=settings["low_info_min_words"],
+                    cue_ratio_threshold=settings["low_info_cue_ratio"],
+                )
+                if quality.is_low_info:
+                    continue
+            rows.append((idx, model.encode_query(text)))
+
+        if not rows:
+            continue
+        rows.sort(key=lambda row: row[0])
+
+        expected_ids = payload.get("episodes") or [payload.get("episode")]
+        expected = [_parse_episode_key(value) for value in expected_ids if value]
+        if not expected:
+            continue
+
+        fallback_single = _rank_video_single_episode(
+            rows=rows,
+            subtitle_indexes=subtitle_indexes,
+            segment_duration_seconds=segment_duration_seconds,
+            window_stride_seconds=window_config.stride_seconds,
+            window_expansion_mode=settings["window_expansion_mode"],
+            base_neighbor_radius=settings["window_neighbor_radius"],
+            max_results_per_query=settings["max_results_per_query"],
+            support_window_bonus=support_window_bonus,
+            support_offset_penalty=support_offset_penalty,
+        )
+        duration_minutes = float(
+            payload.get(
+                "duration_minutes",
+                max(1.0, (max(segment for segment, _ in rows) + 1) * segment_duration_seconds / 60.0),
+            )
+        )
+        detection = detect_multi_episode_candidate(
+            settings=multi_settings,
+            profile=runtime_profile,
+            video_minutes=duration_minutes,
+            observed_segments=len(rows),
+            segments_per_minute=float(payload.get("segments_per_minute", 0.5)),
+        )
+        if detection.is_multi_candidate:
+            detected_multi += 1
+
+        def query_segment(
+            embedding: np.ndarray,
+            mapped_window: int,
+            neighbor_radius: int,
+            max_results_per_query: int,
+        ) -> list[tuple[EpisodeKey, float]]:
+            ranked = _query_segment_from_subtitle_indexes(
+                subtitle_indexes=subtitle_indexes,
+                embedding=embedding,
+                mapped_interval=mapped_window,
+                window_expansion_mode=settings["window_expansion_mode"],
+                neighbor_radius=neighbor_radius,
+                max_results_per_query=max_results_per_query,
+                support_window_bonus=support_window_bonus,
+                support_offset_penalty=support_offset_penalty,
+            )
+            return [(episode, score) for episode, score, _ in ranked]
+
+        assignment = resolve_multi_episode_assignment(
+            settings=multi_settings,
+            detection=detection,
+            segment_rows=rows,
+            video_minutes=duration_minutes,
+            segment_duration_seconds=segment_duration_seconds,
+            stride_seconds=window_config.stride_seconds,
+            window_seconds=window_config.window_seconds,
+            base_neighbor_radius=settings["window_neighbor_radius"],
+            max_results_per_query=settings["max_results_per_query"],
+            query_segment=query_segment,
+            fallback_single_episode=fallback_single,
+        )
+        should_try_multi = (multi_settings.mode == "force-2") or detection.is_multi_candidate
+        if should_try_multi and assignment.assignment_mode == "single":
+            fallback_to_single += 1
+
+        predicted = list(assignment.assigned_episodes)
+        total += 1
+        exact_order = predicted == expected
+        set_match = len(predicted) == len(expected) and set(predicted) == set(expected)
+        if exact_order:
+            exact_order_hits += 1
+        if set_match:
+            set_hits += 1
+        if len(expected) == 1:
+            single_total += 1
+            if predicted and predicted[0] == expected[0]:
+                single_hits += 1
+
+        if not exact_order:
+            mismatches.append(
+                {
+                    "record_type": "video_assignment_mismatch",
+                    "video_path": payload.get("video_path", ""),
+                    "transcription_path": str(transcription_rel),
+                    "variant_profile": payload.get("variant_profile", "aligned"),
+                    "expected": [str(ep) for ep in expected],
+                    "predicted": [str(ep) for ep in predicted],
+                    "assignment_mode": assignment.assignment_mode,
+                    "split_seconds": assignment.split_seconds,
+                    "assignment_confidence": assignment.assignment_confidence,
+                    "runtime_profile_type": assignment.runtime_profile_type,
+                    "detector_reasons": list(assignment.detector_reasons),
+                    "diagnostics": assignment.diagnostics,
+                }
+            )
+
+    return {
+        "videos_total": total,
+        "videos_multi_detected": detected_multi,
+        "fallback_to_single_count": fallback_to_single,
+        "video_exact_order_accuracy": (exact_order_hits / total) if total else 0.0,
+        "video_episode_set_accuracy": (set_hits / total) if total else 0.0,
+        "video_single_top1_accuracy": (single_hits / single_total) if single_total else 0.0,
+        "video_mismatches": mismatches,
+    }
+
+
 def _query_interval_index(
     interval_data: IntervalSubtitleIndex,
     query_embedding: np.ndarray,
@@ -682,6 +922,139 @@ def _query_interval_index(
             )
         )
     return hits
+
+
+def _query_segment_from_subtitle_indexes(
+    *,
+    subtitle_indexes: dict[int, IntervalSubtitleIndex],
+    embedding: np.ndarray,
+    mapped_interval: int,
+    window_expansion_mode: str,
+    neighbor_radius: int,
+    max_results_per_query: int,
+    support_window_bonus: float,
+    support_offset_penalty: float,
+) -> list[tuple[EpisodeKey, float, int]]:
+    per_episode_support = {}
+    mapped_window_distances: list[float] = []
+
+    mapped_data = subtitle_indexes.get(int(mapped_interval))
+    if mapped_data:
+        for hit in _query_interval_index(
+            mapped_data,
+            embedding,
+            int(mapped_interval),
+            int(max_results_per_query),
+        ):
+            mapped_window_distances.append(hit.distance)
+            adjusted_distance = distance_with_window_penalty(
+                hit.distance,
+                hit.interval_index,
+                int(mapped_interval),
+            )
+            merge_episode_window_hit(
+                per_episode_support,
+                hit.episode,
+                hit.interval_index,
+                adjusted_distance,
+            )
+
+    if should_expand_to_neighbor_windows(
+        mapped_window_distances,
+        expansion_mode=window_expansion_mode,
+    ):
+        for interval_index in neighbor_window_indexes(
+            int(mapped_interval),
+            radius=int(neighbor_radius),
+        ):
+            if interval_index == int(mapped_interval):
+                continue
+            interval_data = subtitle_indexes.get(interval_index)
+            if not interval_data:
+                continue
+            for hit in _query_interval_index(
+                interval_data,
+                embedding,
+                interval_index,
+                int(max_results_per_query),
+            ):
+                adjusted_distance = distance_with_window_penalty(
+                    hit.distance,
+                    hit.interval_index,
+                    int(mapped_interval),
+                )
+                merge_episode_window_hit(
+                    per_episode_support,
+                    hit.episode,
+                    hit.interval_index,
+                    adjusted_distance,
+                )
+
+    ranked = []
+    for episode, support in per_episode_support.items():
+        score, nearest_offset = support_aware_score(
+            support,
+            int(mapped_interval),
+            support_window_bonus=support_window_bonus,
+            support_offset_penalty=support_offset_penalty,
+        )
+        ranked.append((episode, float(score), int(support.best_window_index), int(nearest_offset)))
+    ranked.sort(key=lambda item: (item[1], item[3], item[0]))
+    return [(episode, score, best_window_index) for episode, score, best_window_index, _ in ranked]
+
+
+def _rank_video_single_episode(
+    *,
+    rows: list[tuple[int, np.ndarray]],
+    subtitle_indexes: dict[int, IntervalSubtitleIndex],
+    segment_duration_seconds: int,
+    window_stride_seconds: int,
+    window_expansion_mode: str,
+    base_neighbor_radius: int,
+    max_results_per_query: int,
+    support_window_bonus: float,
+    support_offset_penalty: float,
+) -> EpisodeKey | None:
+    stats: dict[EpisodeKey, tuple[int, float]] = {}
+    for segment_index, embedding in rows:
+        mapped = map_segment_index_to_window_index(
+            int(segment_index),
+            int(segment_duration_seconds),
+            int(window_stride_seconds),
+        )
+        ranked = _query_segment_from_subtitle_indexes(
+            subtitle_indexes=subtitle_indexes,
+            embedding=embedding,
+            mapped_interval=int(mapped),
+            window_expansion_mode=window_expansion_mode,
+            neighbor_radius=int(base_neighbor_radius),
+            max_results_per_query=int(max_results_per_query),
+            support_window_bonus=support_window_bonus,
+            support_offset_penalty=support_offset_penalty,
+        )
+        for episode, score, _ in ranked:
+            count, min_score = stats.get(episode, (0, float("inf")))
+            stats[episode] = (count + 1, min(float(min_score), float(score)))
+    if not stats:
+        return None
+    ordered = sorted(stats.items(), key=lambda row: (-row[1][0], row[1][1], row[0]))
+    return ordered[0][0]
+
+
+def _build_dataset_runtime_profile(dataset_dir: Path, *, include_quarantined_subs: bool):
+    meta = _load_dataset_meta(dataset_dir)
+    tmdb_minutes = {}
+    source_series_dir = meta.get("source_series_dir")
+    if source_series_dir:
+        series = Series.from_dir(Path(source_series_dir).expanduser().resolve())
+        if series:
+            tmdb_minutes = collect_tmdb_episode_runtimes_minutes(series)
+    dataset_paths = _resolve_dataset_paths(dataset_dir)
+    srt_minutes = collect_srt_episode_runtimes_minutes(dataset_paths.subtitles_dir)
+    if not include_quarantined_subs:
+        for episode_key in load_quarantined_episodes(dataset_paths.subtitles_dir):
+            srt_minutes.pop(episode_key, None)
+    return build_runtime_profile(tmdb_minutes, srt_minutes)
 
 
 def _merge_episode_match_window(
@@ -822,6 +1195,34 @@ def _print_report(report: dict, top_ks: list[int]):
             confusion_table.add_row(row["expected"], row["predicted"], str(row["count"]))
         console.print(confusion_table)
 
+    video_level = report.get("video_level")
+    if video_level:
+        video_table = Table(title="Video-Level Assignment")
+        video_table.add_column("Metric")
+        video_table.add_column("Value")
+        video_table.add_row("Videos total", str(video_level.get("videos_total", 0)))
+        video_table.add_row(
+            "Videos multi detected",
+            str(video_level.get("videos_multi_detected", 0)),
+        )
+        video_table.add_row(
+            "Fallback-to-single count",
+            str(video_level.get("fallback_to_single_count", 0)),
+        )
+        video_table.add_row(
+            "Exact ordered pair accuracy",
+            f"{video_level.get('video_exact_order_accuracy', 0.0):.4f}",
+        )
+        video_table.add_row(
+            "Episode set accuracy",
+            f"{video_level.get('video_episode_set_accuracy', 0.0):.4f}",
+        )
+        video_table.add_row(
+            "Single top-1 accuracy",
+            f"{video_level.get('video_single_top1_accuracy', 0.0):.4f}",
+        )
+        console.print(video_table)
+
 
 def _write_errors_output(path: Path, mismatches: list[dict]):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -833,7 +1234,9 @@ def _write_errors_output(path: Path, mismatches: list[dict]):
             writer = csv.DictWriter(
                 out,
                 fieldnames=[
+                    "record_type",
                     "video_path",
+                    "transcription_path",
                     "segment_index",
                     "segment_start_seconds",
                     "segment_end_seconds",
@@ -842,8 +1245,15 @@ def _write_errors_output(path: Path, mismatches: list[dict]):
                     "variant_profile",
                     "expected",
                     "top_predictions",
+                    "predicted",
                     "top_prediction_matches",
                     "rank",
+                    "assignment_mode",
+                    "split_seconds",
+                    "assignment_confidence",
+                    "runtime_profile_type",
+                    "detector_reasons",
+                    "diagnostics",
                     "transcript_text",
                 ],
             )
@@ -852,6 +1262,8 @@ def _write_errors_output(path: Path, mismatches: list[dict]):
                 writer.writerow(
                     {
                         "video_path": mismatch.get("video_path", ""),
+                        "record_type": mismatch.get("record_type", "segment_mismatch"),
+                        "transcription_path": mismatch.get("transcription_path", ""),
                         "segment_index": mismatch.get("segment_index", ""),
                         "segment_start_seconds": mismatch.get("segment_start_seconds", ""),
                         "segment_end_seconds": mismatch.get("segment_end_seconds", ""),
@@ -860,11 +1272,18 @@ def _write_errors_output(path: Path, mismatches: list[dict]):
                         "variant_profile": mismatch.get("variant_profile", ""),
                         "expected": "|".join(mismatch.get("expected", [])),
                         "top_predictions": "|".join(mismatch.get("top_predictions", [])),
+                        "predicted": "|".join(mismatch.get("predicted", [])),
                         "top_prediction_matches": json.dumps(
                             mismatch.get("top_prediction_matches", []),
                             ensure_ascii=False,
                         ),
                         "rank": mismatch.get("rank", ""),
+                        "assignment_mode": mismatch.get("assignment_mode", ""),
+                        "split_seconds": mismatch.get("split_seconds", ""),
+                        "assignment_confidence": mismatch.get("assignment_confidence", ""),
+                        "runtime_profile_type": mismatch.get("runtime_profile_type", ""),
+                        "detector_reasons": "|".join(mismatch.get("detector_reasons", [])),
+                        "diagnostics": json.dumps(mismatch.get("diagnostics", {}), ensure_ascii=False),
                         "transcript_text": mismatch.get("transcript_text", ""),
                     }
                 )
@@ -874,6 +1293,165 @@ def _write_errors_output(path: Path, mismatches: list[dict]):
                 out.write(json.dumps(mismatch, ensure_ascii=False))
                 out.write("\n")
     console.print(f"[green]Wrote errors output to {path}[/green]")
+
+
+def _collect_multi_episode_failures(video_report: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for mismatch in video_report.get("video_mismatches", []):
+        expected = mismatch.get("expected") or []
+        if len(expected) < 2:
+            continue
+        if mismatch.get("assignment_mode") == "multi_2":
+            continue
+        rows.append(mismatch)
+    return rows
+
+
+def _write_multi_episode_failures_output(path: Path, failures: list[dict], *, pair_margin: float):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_multi_episode_failures_html(path, failures, pair_margin=pair_margin)
+    console.print(f"[green]Wrote multi-episode failure report to {path}[/green]")
+
+
+def _write_multi_episode_failures_html(path: Path, failures: list[dict], *, pair_margin: float):
+    def _fmt_episode_rows(rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return "<div class='empty'>No ranked episode candidates captured</div>"
+        parts = []
+        for row in rows:
+            episode = html.escape(str(row.get("episode", "")))
+            mean_loss = row.get("mean_loss", "")
+            hit_ratio = row.get("hit_ratio", "")
+            parts.append(
+                "<tr>"
+                f"<td><code>{episode}</code></td>"
+                f"<td>{mean_loss}</td>"
+                f"<td>{hit_ratio}</td>"
+                "</tr>"
+            )
+        return (
+            "<table><thead><tr><th>Episode</th><th>Mean loss</th><th>Hit ratio</th></tr></thead>"
+            f"<tbody>{''.join(parts)}</tbody></table>"
+        )
+
+    def _fmt_split_candidates(rows: list[dict[str, Any]]) -> str:
+        if not rows:
+            return "<div class='empty'>No split candidate details captured</div>"
+        cards = []
+        for row in rows:
+            split_seconds = row.get("split_seconds", "")
+            pair = row.get("pair", [])
+            pair_score = row.get("pair_score", "")
+            c1_count = row.get("chunk1_segment_count", "")
+            c2_count = row.get("chunk2_segment_count", "")
+            pair_label = " -> ".join(html.escape(str(item)) for item in pair)
+            cards.append(
+                "<details class='split'>"
+                f"<summary><strong>Split {split_seconds}s</strong> pair=<code>{pair_label}</code> "
+                f"score={pair_score} chunk_sizes=({c1_count},{c2_count})</summary>"
+                "<div class='split-grid'>"
+                "<section><h4>Chunk 1 top</h4>"
+                f"{_fmt_episode_rows(row.get('chunk1_top', []))}"
+                "</section>"
+                "<section><h4>Chunk 2 top</h4>"
+                f"{_fmt_episode_rows(row.get('chunk2_top', []))}"
+                "</section>"
+                "</div>"
+                "</details>"
+            )
+        return "".join(cards)
+
+    articles = []
+    for idx, failure in enumerate(failures, start=1):
+        video_path = html.escape(str(failure.get("video_path", "")))
+        transcription_path = html.escape(str(failure.get("transcription_path", "")))
+        variant = html.escape(str(failure.get("variant_profile", "")))
+        expected = html.escape("|".join(failure.get("expected", [])))
+        predicted = html.escape("|".join(failure.get("predicted", [])))
+        detector_reasons = ", ".join(
+            html.escape(str(reason))
+            for reason in (failure.get("detector_reasons") or [])
+        )
+        diagnostics = failure.get("diagnostics") or {}
+        reason = html.escape(str(diagnostics.get("reason", "")))
+        margin = diagnostics.get("margin", "")
+        best_pair_score = diagnostics.get("best_pair_score", "")
+        second_pair_score = diagnostics.get("second_pair_score", "")
+        threshold = diagnostics.get("pair_margin_threshold", pair_margin)
+        best_split_seconds = diagnostics.get("best_split_seconds", "")
+        best_pair = " -> ".join(str(v) for v in (diagnostics.get("best_pair") or []))
+        split_evaluated = diagnostics.get("split_evaluated") or []
+        chunk1_top = diagnostics.get("chunk1_top", [])
+        chunk2_top = diagnostics.get("chunk2_top", [])
+        split_candidates = diagnostics.get("split_candidates", [])
+        articles.append(
+            "<article class='failure'>"
+            f"<h2>Multi Failure #{idx}</h2>"
+            "<div class='meta-grid'>"
+            f"<div><strong>Video:</strong> <code>{video_path}</code></div>"
+            f"<div><strong>Transcription:</strong> <code>{transcription_path}</code></div>"
+            f"<div><strong>Profile:</strong> {variant}</div>"
+            f"<div><strong>Expected:</strong> {expected}</div>"
+            f"<div><strong>Predicted:</strong> {predicted}</div>"
+            f"<div><strong>Assignment mode:</strong> {html.escape(str(failure.get('assignment_mode', '')))}</div>"
+            f"<div><strong>Runtime profile:</strong> {html.escape(str(failure.get('runtime_profile_type', '')))}</div>"
+            f"<div><strong>Detector reasons:</strong> {detector_reasons}</div>"
+            f"<div><strong>Failure reason:</strong> {reason}</div>"
+            f"<div><strong>Margin:</strong> {margin}</div>"
+            f"<div><strong>Pair margin threshold:</strong> {threshold}</div>"
+            f"<div><strong>Best pair score:</strong> {best_pair_score}</div>"
+            f"<div><strong>Second pair score:</strong> {second_pair_score}</div>"
+            f"<div><strong>Best split:</strong> {best_split_seconds}</div>"
+            f"<div><strong>Best pair:</strong> <code>{html.escape(best_pair)}</code></div>"
+            f"<div><strong>Splits evaluated:</strong> {html.escape(str(split_evaluated))}</div>"
+            "</div>"
+            "<details open><summary><strong>Best split chunk rankings</strong></summary>"
+            "<div class='split-grid'>"
+            "<section><h4>Chunk 1 top</h4>"
+            f"{_fmt_episode_rows(chunk1_top)}"
+            "</section>"
+            "<section><h4>Chunk 2 top</h4>"
+            f"{_fmt_episode_rows(chunk2_top)}"
+            "</section>"
+            "</div>"
+            "</details>"
+            "<details open><summary><strong>Top split candidates</strong></summary>"
+            f"{_fmt_split_candidates(split_candidates)}"
+            "</details>"
+            "</article>"
+        )
+
+    html_doc = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Episode Matcher Multi-Episode Failures</title>"
+        "<style>"
+        "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        "background:#f8fafc;color:#0f172a;margin:0;padding:24px;}"
+        "h1{margin:0 0 12px 0;font-size:24px;}"
+        ".summary{margin:0 0 20px 0;color:#334155;}"
+        ".failure{background:#fff;border:1px solid #cbd5e1;border-radius:10px;"
+        "padding:16px;margin:0 0 16px 0;box-shadow:0 1px 2px rgba(15,23,42,.06);}"
+        ".failure h2{margin:0 0 12px 0;font-size:18px;}"
+        ".meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));"
+        "gap:8px 16px;margin-bottom:12px;}"
+        ".split-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));"
+        "gap:12px;}"
+        ".split{margin:10px 0;padding:10px;border:1px solid #e2e8f0;border-radius:8px;}"
+        "details{margin:8px 0;}"
+        "summary{cursor:pointer;}"
+        "table{width:100%;border-collapse:collapse;}"
+        "th,td{border:1px solid #e2e8f0;padding:6px 8px;text-align:left;}"
+        "th{background:#f1f5f9;}"
+        ".empty{color:#64748b;font-style:italic;}"
+        "code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;}"
+        "</style></head><body>"
+        "<h1>Multi-Episode Matching Failures</h1>"
+        f"<p class='summary'>Failures: {len(failures)} | Pair margin threshold: {pair_margin}</p>"
+        f"{''.join(articles) if articles else '<p>No multi-episode matching failures found.</p>'}"
+        "</body></html>"
+    )
+    path.write_text(html_doc, encoding="utf-8")
 
 
 def _write_errors_output_html(path: Path, mismatches: list[dict]):
@@ -917,10 +1495,11 @@ def _write_errors_output_html(path: Path, mismatches: list[dict]):
 
     rows = []
     for idx, mismatch in enumerate(mismatches, start=1):
+        record_type = html.escape(str(mismatch.get("record_type", "segment_mismatch")))
         video_path = html.escape(str(mismatch.get("video_path", "")))
         variant = html.escape(str(mismatch.get("variant_profile", "")))
         expected = html.escape("|".join(mismatch.get("expected", [])))
-        top_predictions = html.escape("|".join(mismatch.get("top_predictions", [])))
+        top_predictions = html.escape("|".join(mismatch.get("top_predictions", []) or mismatch.get("predicted", [])))
         rank = mismatch.get("rank", "")
         segment_index = mismatch.get("segment_index", "")
         segment_start_seconds = mismatch.get("segment_start_seconds", "")
@@ -929,10 +1508,15 @@ def _write_errors_output_html(path: Path, mismatches: list[dict]):
         segment_end_timestamp = html.escape(str(mismatch.get("segment_end_timestamp", "")))
         transcript_text = html.escape(str(mismatch.get("transcript_text", "")))
         prediction_details = _fmt_predictions(mismatch.get("top_prediction_matches", []))
+        assignment_mode = html.escape(str(mismatch.get("assignment_mode", "")))
+        split_seconds = html.escape(str(mismatch.get("split_seconds", "")))
+        assignment_confidence = html.escape(str(mismatch.get("assignment_confidence", "")))
+        runtime_profile_type = html.escape(str(mismatch.get("runtime_profile_type", "")))
         rows.append(
             "<article class='mismatch'>"
             f"<h2>Mismatch #{idx}</h2>"
             "<div class='meta-grid'>"
+            f"<div><strong>Type:</strong> {record_type}</div>"
             f"<div><strong>Video:</strong> <code>{video_path}</code></div>"
             f"<div><strong>Segment:</strong> {segment_index}</div>"
             f"<div><strong>Segment time (s):</strong> {segment_start_seconds} - {segment_end_seconds}</div>"
@@ -941,6 +1525,10 @@ def _write_errors_output_html(path: Path, mismatches: list[dict]):
             f"<div><strong>Expected:</strong> {expected}</div>"
             f"<div><strong>Top predictions:</strong> {top_predictions}</div>"
             f"<div><strong>Rank:</strong> {rank}</div>"
+            f"<div><strong>Assignment mode:</strong> {assignment_mode}</div>"
+            f"<div><strong>Split seconds:</strong> {split_seconds}</div>"
+            f"<div><strong>Assignment confidence:</strong> {assignment_confidence}</div>"
+            f"<div><strong>Runtime profile:</strong> {runtime_profile_type}</div>"
             "</div>"
             "<details open><summary><strong>Transcript segment text</strong></summary>"
             f"<pre>{transcript_text}</pre></details>"
