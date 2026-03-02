@@ -22,11 +22,24 @@ class SubtitleEmbeddingsExtractor:
     def execute(self, interval_index: int,
                 interval_subs_paths: list[tuple[EpisodeKey, Path]]):
         dtype = self.get_dtype()
+        allowed_episode_keys = {episode_key for episode_key, _ in interval_subs_paths}
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
         embeddings_file = self.output_dir / f"{interval_index}.npy"
         if embeddings_file.exists():
             existing_embeddings = np.load(embeddings_file).view(dtype)
+            if allowed_episode_keys:
+                keep = np.array(
+                    [
+                        EpisodeKey(
+                            int(row["season_number"]),
+                            int(row["episode_number"]),
+                        ) in allowed_episode_keys
+                        for row in existing_embeddings["episode_key"]
+                    ],
+                    dtype=bool,
+                )
+                existing_embeddings = existing_embeddings[keep]
             existing_hashes = {row.tobytes()
                                for row in existing_embeddings["sha256"]}
         else:

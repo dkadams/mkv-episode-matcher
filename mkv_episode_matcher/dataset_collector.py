@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,7 @@ from mkv_episode_matcher.config import Configuration
 from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.indexed_episode_matcher import IndexedEpisodeMatcher
 from mkv_episode_matcher.misalignment import MisalignmentPolicy
+from mkv_episode_matcher.multi_episode_assignment import resolve_multi_episode_settings
 from mkv_episode_matcher.series import Series, SeriesDirectoryProcessor, get_specified_episodes
 from mkv_episode_matcher.windowing import (
     make_window_config,
@@ -45,6 +47,7 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
     low_info_min_words = resolve_low_info_min_words(config.args, series)
     low_info_cue_ratio = resolve_low_info_cue_ratio(config.args, series)
     max_results_per_query = resolve_max_results_per_query(config.args, series)
+    multi_episode_settings = resolve_multi_episode_settings(config.args, series)
     make_window_config(series.segment_duration, subtitle_overlap_seconds)
 
     misalign_profiles = list(dict.fromkeys(config.args.misalign_profiles or []))
@@ -247,6 +250,20 @@ def _collect_series_dataset(config: Configuration, series, all_series_dirs):
             "low_info_min_words": low_info_min_words,
             "low_info_cue_ratio": low_info_cue_ratio,
             "max_results_per_query": max_results_per_query,
+            "multi_episode_mode": multi_episode_settings.mode,
+            "multi_episode_duration_ratio_threshold": multi_episode_settings.duration_ratio_threshold,
+            "multi_episode_segments_ratio_threshold": multi_episode_settings.segments_ratio_threshold,
+            "multi_episode_min_extra_minutes": multi_episode_settings.min_extra_minutes,
+            "multi_episode_min_extra_segments": multi_episode_settings.min_extra_segments,
+            "multi_episode_split_search_window_seconds": multi_episode_settings.split_search_window_seconds,
+            "multi_episode_min_side_segments": multi_episode_settings.min_side_segments,
+            "multi_episode_candidate_k": multi_episode_settings.candidate_k,
+            "multi_episode_candidate_k_retry": multi_episode_settings.candidate_k_retry,
+            "multi_episode_second_half_horizon_multiplier": (
+                multi_episode_settings.second_half_horizon_multiplier
+            ),
+            "multi_episode_pair_margin": multi_episode_settings.pair_margin,
+            "multi_episode_miss_penalty": multi_episode_settings.miss_penalty,
             "segments_per_minute": config.args.segments_per_minute,
             "random_seed": series.random_seed,
             "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -322,7 +339,55 @@ def _copy_subtitles(series, subtitles_out: Path, specified_keys, exclusions_path
         dest = subtitles_out / srt.name
         shutil.copyfile(srt, dest)
         copied += 1
+    _copy_subtitle_quality_artifacts(
+        series=series,
+        subtitles_out=subtitles_out,
+        specified_keys=specified_keys,
+    )
     return copied
+
+
+def _copy_subtitle_quality_artifacts(series, subtitles_out: Path, specified_keys: set[EpisodeKey]):
+    quality_in = series.subtitles_dir / "quality"
+    if not quality_in.exists():
+        return
+    quality_out = subtitles_out / "quality"
+    quality_out.mkdir(parents=True, exist_ok=True)
+
+    copied_episodes: set[str] = set()
+    for quality_file in quality_in.glob("S*E*.quality.json"):
+        match = re.match(r"^S(\d+)E(\d+)\.quality\.json$", quality_file.name)
+        if not match:
+            continue
+        episode_key = EpisodeKey(int(match.group(1)), int(match.group(2)))
+        if specified_keys and episode_key not in specified_keys:
+            continue
+        shutil.copyfile(quality_file, quality_out / quality_file.name)
+        copied_episodes.add(str(episode_key))
+
+    quarantine_in = quality_in / "quarantine.jsonl"
+    if not quarantine_in.exists():
+        return
+
+    rows = []
+    for line in quarantine_in.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if specified_keys and str(payload.get("episode")) not in copied_episodes:
+            continue
+        rows.append(payload)
+    if not rows:
+        return
+
+    quarantine_out = quality_out / "quarantine.jsonl"
+    with quarantine_out.open("w", encoding="utf-8") as out:
+        for payload in rows:
+            out.write(json.dumps(payload, ensure_ascii=False))
+            out.write("\n")
 
 
 def _write_exclusion(path: Path, payload: dict):

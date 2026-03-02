@@ -15,6 +15,7 @@ from mkv_episode_matcher.episode import EpisodeKey
 from mkv_episode_matcher.series import Series, get_specified_episodes
 from mkv_episode_matcher.subtitle_fixed_intervalizer import \
     SubtitleFixedIntervalizer
+from mkv_episode_matcher.subtitle_quality import subtitle_file_entries
 from mkv_episode_matcher.windowing import (
     DEFAULT_SUPPORT_OFFSET_PENALTY,
     DEFAULT_SUPPORT_WINDOW_BONUS,
@@ -52,6 +53,9 @@ class AbstractSubtitleIndex(ABC):
         self.low_info_min_words = resolve_low_info_min_words(config.args, series)
         self.low_info_cue_ratio = resolve_low_info_cue_ratio(config.args, series)
         self.max_results_per_query = resolve_max_results_per_query(config.args, series)
+        self.include_quarantined_subs = bool(
+            getattr(config.args, "include_quarantined_subs", False)
+        )
         self.support_window_bonus = DEFAULT_SUPPORT_WINDOW_BONUS
         self.support_offset_penalty = DEFAULT_SUPPORT_OFFSET_PENALTY
 
@@ -102,6 +106,20 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
 
             episode_keys = {EpisodeKey(ep.season_number, ep.episode_number)
                             for ep in get_specified_episodes(self.config, self.series)}
+            available_episode_keys = {
+                key
+                for key, _ in subtitle_file_entries(
+                    self.series.subtitles_dir,
+                    include_quarantined=self.include_quarantined_subs,
+                )
+            }
+            episode_keys = episode_keys & available_episode_keys
+            if not episode_keys:
+                logger.warning(
+                    "No subtitle episodes available for indexing after quarantine filtering: {}",
+                    self.series.name,
+                )
+                return
 
             self.intervalize_subs(episode_keys, executor, progress)
             self.extract_embeddings(episode_keys, executor, progress)
@@ -162,9 +180,15 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
         }
         missing_subs = episode_keys - existing_keys
 
-        srt_files = list(self.series.subtitles_dir.rglob("*.srt"))
-        eps_and_subs_to_process = [(key, file) for file in srt_files
-                                   if (key := EpisodeKey.from_srt_path(file)) in missing_subs]
+        subtitle_entries = subtitle_file_entries(
+            self.series.subtitles_dir,
+            include_quarantined=self.include_quarantined_subs,
+        )
+        eps_and_subs_to_process = [
+            (key, file)
+            for key, file in subtitle_entries
+            if key in missing_subs
+        ]
         if not eps_and_subs_to_process:
           logger.info(f"No subs to intervalize for series: {self.series.name}")
           return
@@ -196,7 +220,10 @@ class AbstractSubtitleIndexWriter(AbstractSubtitleIndex):
         executor: Executor, progress: Progress):
         logger.info(f"Extracting embeddings for: {self.series.name}")
 
-        subtitle_files = list(self.series.subtitles_dir.rglob("*.srt"))
+        subtitle_files = subtitle_file_entries(
+            self.series.subtitles_dir,
+            include_quarantined=self.include_quarantined_subs,
+        )
 
         extract_progress = progress.add_task(
             f"Extracting embeddings for {self.series.name} "
