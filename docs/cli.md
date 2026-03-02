@@ -110,6 +110,36 @@ Options:
 - `--display-by-file`, `-F`: Show results grouped by file
 - `--whispercpp`, `--parakeet-mlx`: Transcriber backend (default: `parakeet-mlx` on macOS, `whispercpp` on other platforms). `parakeet-mlx` is macOS-only.
 
+Whisper.cpp runtime tuning (when using `--whispercpp`):
+
+- `WHISPERCPP_THREADS`: Sets whisper.cpp `-t/--threads` per transcription process.
+  If unset, the app defaults to `2` threads per transcription process.
+- `WHISPERCPP_PROCESSORS`: Sets whisper.cpp `-p/--processors` per transcription process.
+- `WHISPERCPP_EXTRA_ARGS`: Appends extra whisper.cpp CLI flags (parsed with shell-style quoting), for example `-bo 1 -l en`.
+
+Example tuning loop on x86_64:
+
+```bash
+WHISPERCPP_THREADS=8 \
+WHISPERCPP_PROCESSORS=1 \
+mkv-episode-matcher match /path/to/Series /path/to/videos \
+  --whispercpp \
+  --transcribe-workers 2 \
+  --io-workers 2
+```
+
+Then compare with:
+
+```bash
+WHISPERCPP_THREADS=4 \
+mkv-episode-matcher match /path/to/Series /path/to/videos \
+  --whispercpp \
+  --transcribe-workers 4 \
+  --io-workers 2
+```
+
+Use whichever setting yields lower wall-clock time on your hardware.
+
 ### `collect-dataset`
 Collect labeled transcription/subtitle pairs for evaluation.
 

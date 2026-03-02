@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -18,9 +19,12 @@ class SubprocessTranscriber:
 class WhispercppTranscriber(SubprocessTranscriber):
     """Thin wrapper around whisper.cpp's whisper-cli binary."""
 
+    DEFAULT_THREADS = 2
+
     def __init__(self, model_name: str, executable: str = "whisper-cli"):
         self.executable = executable
         self.model_path = self._resolve_model_path(Path(model_name).expanduser())
+        self.runtime_args = self._runtime_args()
         if not Path(self.model_path).exists():
             logger.warning(
                 "whispercpp model file '%s' does not exist; transcription will likely fail",
@@ -67,6 +71,41 @@ class WhispercppTranscriber(SubprocessTranscriber):
         fallback = Path(f"ggml-{model_path.name}.bin")
         return str(fallback)
 
+    @staticmethod
+    def _positive_int_env(name: str) -> int | None:
+        raw = os.environ.get(name)
+        if raw is None:
+            return None
+        value = str(raw).strip()
+        if not value:
+            return None
+        try:
+            parsed = int(value)
+        except ValueError:
+            logger.warning(f"Ignoring {name}: expected integer, got '{raw}'")
+            return None
+        if parsed < 1:
+            logger.warning(f"Ignoring {name}: expected value >= 1, got '{parsed}'")
+            return None
+        return parsed
+
+    @classmethod
+    def _runtime_args(cls) -> list[str]:
+        args: list[str] = []
+        threads = cls._positive_int_env("WHISPERCPP_THREADS")
+        processors = cls._positive_int_env("WHISPERCPP_PROCESSORS")
+        args.extend(["-t", str(threads if threads is not None else cls.DEFAULT_THREADS)])
+        if processors is not None:
+            args.extend(["-p", str(processors)])
+
+        extra = str(os.environ.get("WHISPERCPP_EXTRA_ARGS", "")).strip()
+        if extra:
+            try:
+                args.extend(shlex.split(extra))
+            except ValueError as exc:
+                logger.warning(f"Ignoring WHISPERCPP_EXTRA_ARGS: {exc}")
+        return args
+
     def transcribe(self, audio_path: Path):
         logger.info(f"Transcribing {audio_path} with whispercpp")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -77,6 +116,7 @@ class WhispercppTranscriber(SubprocessTranscriber):
                 self.model_path,
                 "-f",
                 str(audio_path),
+                *self.runtime_args,
                 "-otxt",
                 "-of",
                 str(output_base),
