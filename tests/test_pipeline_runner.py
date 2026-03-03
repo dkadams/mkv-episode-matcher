@@ -347,3 +347,29 @@ def test_pipeline_runner_flushes_on_batch_wait_timeout(monkeypatch, tmp_path):
     video.write_bytes(b"dummy")
     runner.run({video: [0, 1]})
     assert batch_sizes == [1, 1]
+
+
+def test_pipeline_runner_uses_whispercpp_default_microbatch_size(monkeypatch, tmp_path):
+    monkeypatch.delenv("MEM_TRANSCRIBE_MICROBATCH_SIZE", raising=False)
+    series = _series(tmp_path)
+    runner = PipelineRunner(
+        config=_config(),
+        series=series,
+        transcriber_type=WhispercppTranscriber,
+        model_name="unused",
+        output_dir=series.ensure_transcription_text_dir(),
+    )
+    assert runner._microbatch_size() == 8
+
+
+def test_pipeline_runner_allows_microbatch_override_for_whispercpp(monkeypatch, tmp_path):
+    monkeypatch.setenv("MEM_TRANSCRIBE_MICROBATCH_SIZE", "1")
+    series = _series(tmp_path)
+    runner = PipelineRunner(
+        config=_config(),
+        series=series,
+        transcriber_type=WhispercppTranscriber,
+        model_name="unused",
+        output_dir=series.ensure_transcription_text_dir(),
+    )
+    assert runner._microbatch_size() == 1

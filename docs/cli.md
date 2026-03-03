@@ -116,6 +116,8 @@ Whisper.cpp runtime tuning (when using `--whispercpp`):
   If unset, the app defaults to `2` threads per transcription process.
 - `WHISPERCPP_PROCESSORS`: Sets whisper.cpp `-p/--processors` per transcription process.
 - `WHISPERCPP_EXTRA_ARGS`: Appends extra whisper.cpp CLI flags (parsed with shell-style quoting), for example `-bo 1 -l en`.
+- Whispercpp now supports Stage-B micro-batch submission and runs one `whisper-cli` call per submitted batch using repeated
+  `-f`/`-of` pairs.
 
 Example tuning loop on x86_64:
 
@@ -150,8 +152,8 @@ Faster-whisper runtime tuning (when using `--faster-whisper`):
 Transcription scheduler micro-batching:
 
 - `MEM_TRANSCRIBE_MICROBATCH_SIZE`: Global Stage-B micro-batch size override (integer >= 1).
-  If unset, each backend default is used (`1` for non-batch backends such as `whispercpp`,
-  `8` for batch backends such as `parakeet-mlx` and `faster-whisper`).
+  If unset, each backend default is used (`8` for `whispercpp`, `parakeet-mlx`, and `faster-whisper`;
+  `1` for non-batch backends).
 - `MEM_TRANSCRIBE_MICROBATCH_MAX_WAIT_MS`: Max wait time before flushing a partial Stage-B batch
   (default: `15` ms).
 

@@ -38,6 +38,8 @@ class WhispercppTranscriber(SubprocessTranscriber):
     """Thin wrapper around whisper.cpp's whisper-cli binary."""
 
     DEFAULT_THREADS = 2
+    BATCH_CAPABLE = True
+    DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str, executable: str = "whisper-cli"):
         self.executable = executable
@@ -125,47 +127,63 @@ class WhispercppTranscriber(SubprocessTranscriber):
         return args
 
     def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
-        return [self._transcribe_one(path) for path in audio_paths]
+        if not audio_paths:
+            return []
 
-    def _transcribe_one(self, audio_path: Path) -> str | None:
-        logger.info(f"Transcribing {audio_path} with whispercpp")
+        logger.info("Transcribing {} chunks with whispercpp", len(audio_paths))
         with tempfile.TemporaryDirectory() as tmpdir:
-            output_base = Path(tmpdir) / "whispercpp_transcription"
+            output_bases = [
+                Path(tmpdir) / f"whispercpp_transcription_{index:04d}"
+                for index, _ in enumerate(audio_paths)
+            ]
             cmd = [
                 self.executable,
                 "-m",
                 self.model_path,
-                "-f",
-                str(audio_path),
                 *self.runtime_args,
                 "-otxt",
-                "-of",
-                str(output_base),
             ]
+            for audio_path, output_base in zip(audio_paths, output_bases):
+                cmd.extend(["-f", str(audio_path), "-of", str(output_base)])
+
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            except FileNotFoundError:
-                logger.error(f"whispercpp executable '{self.executable}' not found")
-                return None
+            except FileNotFoundError as exc:
+                raise RuntimeError(
+                    f"whispercpp executable '{self.executable}' not found"
+                ) from exc
 
             if result.returncode != 0:
-                logger.error(
-                    f"whispercpp failed for {audio_path} "
+                raise RuntimeError(
+                    f"whispercpp failed for batch of {len(audio_paths)} "
                     f"(exit {result.returncode}): {result.stderr.strip()}"
                 )
-                return None
 
-            transcript_file = Path(f"{output_base}.txt")
-            if not transcript_file.exists():
-                logger.error(
-                    f"whispercpp did not produce expected transcript file {transcript_file}"
+            texts: list[str | None] = []
+            missing_outputs: list[Path] = []
+            for output_base in output_bases:
+                transcript_file = Path(f"{output_base}.txt")
+                if not transcript_file.exists():
+                    missing_outputs.append(transcript_file)
+                    continue
+                text = transcript_file.read_text(encoding="utf-8").strip()
+                texts.append(text or None)
+
+            if missing_outputs:
+                raise RuntimeError(
+                    "whispercpp did not produce expected transcript files for batch: "
+                    + ", ".join(str(path) for path in missing_outputs)
                 )
-                logger.error(f"whispercpp output: {result.stdout.strip()}")
-                logger.error(f"whispercpp error: {result.stderr.strip()}")
-                return None
+            if len(texts) != len(audio_paths):
+                raise RuntimeError(
+                    f"whispercpp returned {len(texts)} transcripts for "
+                    f"{len(audio_paths)} inputs"
+                )
 
-            text = transcript_file.read_text(encoding="utf-8").strip()
-            return text or None
+            return texts
+
+    def _transcribe_one(self, audio_path: Path) -> str | None:
+        return self.transcribe_many([audio_path])[0]
 
 
 PARAKEET_MLX_UNSUPPORTED_MESSAGE = (

@@ -8,6 +8,8 @@ This project can be run as a CLI container with the same subcommands and flags a
 - `parakeet-mlx` is macOS-only and is not supported in Linux containers.
 - `whisper-cli` is built from `whisper.cpp` source in a Docker build stage (default ref: `v1.8.2`) and installed into the final runtime image.
 - The Docker build exposes `whisper.cpp` CMake tuning args for CPU backends (`GGML_BLAS`, `GGML_OPENMP`, SIMD flags, etc.).
+- The application scheduler submits whispercpp work in micro-batches by default; each batch is executed as one `whisper-cli`
+  invocation with repeated `-f`/`-of` arguments.
 - On `linux/amd64` with Python 3.10+, dependency locking resolves `torch` from the PyTorch CPU wheel index (`download.pytorch.org/whl/cpu`) to avoid CUDA/NVIDIA package downloads in CPU-only deployments.
 - The image includes compiler toolchain packages because `annoy` and `hnswlib` are built from source for `linux/amd64` + Python 3.12.
 - Python dependencies are installed with `uv sync --frozen` from `uv.lock` for reproducible versions.
