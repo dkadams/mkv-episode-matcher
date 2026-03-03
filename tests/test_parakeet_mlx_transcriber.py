@@ -64,7 +64,7 @@ def test_parakeet_mlx_uses_explicit_model_name(monkeypatch):
     assert transcriber.model_name == "mlx-community/parakeet-tdt-0.6b-v3"
 
 
-def test_parakeet_mlx_transcribe_returns_first_item(monkeypatch, tmp_path):
+def test_parakeet_mlx_transcribe_many_single_item(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribers, "is_parakeet_mlx_supported", lambda: (True, None))
     monkeypatch.setattr(
         ParakeetMlxTranscriber,
@@ -79,8 +79,8 @@ def test_parakeet_mlx_transcribe_returns_first_item(monkeypatch, tmp_path):
     )
 
     transcriber = ParakeetMlxTranscriber(None)
-    text = transcriber.transcribe(tmp_path / "chunk.wav")
-    assert text == "hello world"
+    text = transcriber.transcribe_many([tmp_path / "chunk.wav"])
+    assert text == ["hello world"]
 
 
 def test_parakeet_mlx_batch_transcribe_many_splits_batches(monkeypatch, tmp_path):

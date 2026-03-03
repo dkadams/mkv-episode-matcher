@@ -23,7 +23,7 @@ def test_faster_whisper_raises_clear_error_when_unsupported(monkeypatch):
         FasterWhisperTranscriber("small.en")
 
 
-def test_faster_whisper_transcribe_returns_first_item(monkeypatch, tmp_path):
+def test_faster_whisper_transcribe_many_single_item(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribers, "is_faster_whisper_supported", lambda: (True, None))
 
     class DummyPipeline:
@@ -42,8 +42,8 @@ def test_faster_whisper_transcribe_returns_first_item(monkeypatch, tmp_path):
     )
 
     transcriber = FasterWhisperTranscriber(None)
-    text = transcriber.transcribe(tmp_path / "chunk.wav")
-    assert text == "hello world"
+    text = transcriber.transcribe_many([tmp_path / "chunk.wav"])
+    assert text == ["hello world"]
 
 
 def test_faster_whisper_batch_transcribe_many_splits_batches(monkeypatch, tmp_path):
@@ -101,7 +101,7 @@ def test_faster_whisper_batch_transcribe_many_handles_batch_failure(monkeypatch,
         transcriber.transcribe_many(paths)
 
 
-def test_faster_whisper_falls_back_when_multi_input_is_unsupported(monkeypatch, tmp_path):
+def test_faster_whisper_raises_when_multi_input_is_unsupported(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribers, "is_faster_whisper_supported", lambda: (True, None))
     monkeypatch.setenv("FASTER_WHISPER_BATCH_SIZE", "2")
     calls = []
@@ -121,14 +121,8 @@ def test_faster_whisper_falls_back_when_multi_input_is_unsupported(monkeypatch, 
 
     transcriber = FasterWhisperTranscriber(None)
     paths = [tmp_path / "chunk_0.wav", tmp_path / "chunk_1.wav"]
-    texts = transcriber.transcribe_many(paths)
-
-    assert texts == [f"text-{tmp_path.name}", f"text-{tmp_path.name}"]
+    with pytest.raises(RuntimeError, match="batch_id=0"):
+        transcriber.transcribe_many(paths)
     assert isinstance(calls[0][0], list)
     assert calls[0][1] == 2
-    # After the first failure, the transcriber should switch to per-path mode.
-    assert all(isinstance(audio, str) for audio, _ in calls[1:])
-    calls_after_fallback = len(calls)
-    transcriber.transcribe_many(paths)
-    assert len(calls) == calls_after_fallback + 2
-    assert all(isinstance(audio, str) for audio, _ in calls[calls_after_fallback:])
+    assert len(calls) == 1

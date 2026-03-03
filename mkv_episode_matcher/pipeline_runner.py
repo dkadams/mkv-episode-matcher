@@ -590,10 +590,6 @@ class PipelineRunner:
         if override is not None:
             return override
 
-        batch_capable = bool(getattr(self.transcriber_type, "BATCH_CAPABLE", False))
-        if not batch_capable:
-            return 1
-
         default_size = getattr(self.transcriber_type, "DEFAULT_MICROBATCH_SIZE", 1)
         try:
             resolved = int(default_size)

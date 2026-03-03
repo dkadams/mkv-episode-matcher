@@ -17,8 +17,8 @@ class DummySeries:
 
 
 class DummyTranscriber:
-    def transcribe(self, _chunk_path: Path):
-        return "hello"
+    def transcribe_many(self, chunk_paths: list[Path]):
+        return ["hello" for _ in chunk_paths]
 
 
 def test_transcriber_applies_misaligned_offsets(monkeypatch, tmp_path):

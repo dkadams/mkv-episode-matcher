@@ -137,7 +137,6 @@ def test_pipeline_runner_records_extract_failures(monkeypatch, tmp_path):
 
 def test_pipeline_runner_batches_across_files(monkeypatch, tmp_path):
     class BatchTranscriber:
-        BATCH_CAPABLE = True
         DEFAULT_MICROBATCH_SIZE = 2
 
     seen_batches: list[list[Path]] = []
@@ -196,10 +195,9 @@ def test_pipeline_runner_batches_across_files(monkeypatch, tmp_path):
     assert any(set(batch) == {video1, video2} for batch in seen_batches)
 
 
-def test_pipeline_runner_forces_size_one_for_non_batch_backends(monkeypatch, tmp_path):
-    class NonBatchTranscriber:
-        BATCH_CAPABLE = False
-        DEFAULT_MICROBATCH_SIZE = 8
+def test_pipeline_runner_uses_backend_default_microbatch_size(monkeypatch, tmp_path):
+    class BatchTranscriber:
+        DEFAULT_MICROBATCH_SIZE = 3
 
     batch_sizes: list[int] = []
 
@@ -236,19 +234,18 @@ def test_pipeline_runner_forces_size_one_for_non_batch_backends(monkeypatch, tmp
     runner = PipelineRunner(
         config=_config(),
         series=series,
-        transcriber_type=NonBatchTranscriber,
+        transcriber_type=BatchTranscriber,
         model_name="unused",
         output_dir=series.ensure_transcription_text_dir(),
     )
     video = tmp_path / "episode.mkv"
     video.write_bytes(b"dummy")
-    runner.run({video: [0, 1, 2]})
-    assert batch_sizes == [1, 1, 1]
+    runner.run({video: [0, 1, 2, 3]})
+    assert batch_sizes == [3, 1]
 
 
 def test_pipeline_runner_flushes_partial_batch_on_sentinel(monkeypatch, tmp_path):
     class BatchTranscriber:
-        BATCH_CAPABLE = True
         DEFAULT_MICROBATCH_SIZE = 3
 
     batch_sizes: list[int] = []
@@ -298,7 +295,6 @@ def test_pipeline_runner_flushes_partial_batch_on_sentinel(monkeypatch, tmp_path
 
 def test_pipeline_runner_flushes_on_batch_wait_timeout(monkeypatch, tmp_path):
     class BatchTranscriber:
-        BATCH_CAPABLE = True
         DEFAULT_MICROBATCH_SIZE = 2
 
     batch_sizes: list[int] = []

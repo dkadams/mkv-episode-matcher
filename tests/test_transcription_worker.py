@@ -86,12 +86,11 @@ def test_batch_worker_falls_back_when_result_count_mismatch(monkeypatch):
     calls = {"single": 0}
 
     class DummyTranscriber:
-        def transcribe_many(self, _paths):
-            return ["only-one"]
-
-        def transcribe(self, path):
+        def transcribe_many(self, paths):
+            if len(paths) > 1:
+                return ["only-one"]
             calls["single"] += 1
-            return f"single-{Path(path).stem}"
+            return [f"single-{Path(paths[0]).stem}"]
 
     monkeypatch.setattr(
         worker,
@@ -111,14 +110,13 @@ def test_batch_worker_falls_back_when_batch_raises(monkeypatch):
     calls = {"single": 0}
 
     class DummyTranscriber:
-        def transcribe_many(self, _paths):
-            raise RuntimeError("batch boom")
-
-        def transcribe(self, path):
+        def transcribe_many(self, paths):
+            if len(paths) > 1:
+                raise RuntimeError("batch boom")
             calls["single"] += 1
-            if Path(path).stem.endswith("1"):
+            if Path(paths[0]).stem.endswith("1"):
                 raise RuntimeError("single boom")
-            return "ok"
+            return ["ok"]
 
     monkeypatch.setattr(
         worker,

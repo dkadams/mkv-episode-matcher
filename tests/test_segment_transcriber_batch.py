@@ -74,41 +74,22 @@ def test_execute_uses_transcribe_many_when_available(monkeypatch, tmp_path):
     assert metrics["segments_transcribed"] == 2
 
 
-def test_execute_falls_back_to_transcribe(monkeypatch, tmp_path):
-    calls = []
-
-    class DummyAudioChunkExtractor:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            pass
-
-        def extract(self, _file_path, offset, _duration):
-            return tmp_path / f"chunk_{int(offset)}.wav"
-
+def test_execute_requires_batch_transcriber(tmp_path):
     class SingleTranscriber:
         def __init__(self, _model_name):
             pass
 
-        def transcribe(self, audio_path):
-            calls.append(Path(audio_path))
-            return {"text": Path(audio_path).stem}
-
-    monkeypatch.setattr(
-        "mkv_episode_matcher.segment_transcriber.AudioChunkExtractor",
-        DummyAudioChunkExtractor,
-    )
+        def transcribe(self, _audio_path):
+            return "unused"
 
     series = _series(tmp_path)
-    segment_transcriber = SegmentTranscriber(
-        _config(),
-        series,
-        "unused",
-        SingleTranscriber,
-    )
-
-    video = tmp_path / "episode.mkv"
-    video.write_bytes(b"dummy")
-    segment_transcriber.execute([(video, [0, 1])])
-    assert calls == [tmp_path / "chunk_0.wav", tmp_path / "chunk_30.wav"]
+    try:
+        SegmentTranscriber(
+            _config(),
+            series,
+            "unused",
+            SingleTranscriber,
+        )
+        raise AssertionError("expected TypeError")
+    except TypeError as exc:
+        assert "transcribe_many" in str(exc)

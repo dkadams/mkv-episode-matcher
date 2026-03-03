@@ -25,9 +25,9 @@ def test_whispercpp_transcribe_applies_runtime_env_args(monkeypatch, tmp_path):
     monkeypatch.setattr("mkv_episode_matcher.transcribers.subprocess.run", fake_run)
 
     transcriber = WhispercppTranscriber(str(model_path))
-    text = transcriber.transcribe(audio_path)
+    text = transcriber.transcribe_many([audio_path])
 
-    assert text == "hello world"
+    assert text == ["hello world"]
     assert seen["cmd"] == [
         "whisper-cli",
         "-m",
@@ -69,9 +69,9 @@ def test_whispercpp_ignores_invalid_runtime_env_args(monkeypatch, tmp_path):
     monkeypatch.setattr("mkv_episode_matcher.transcribers.subprocess.run", fake_run)
 
     transcriber = WhispercppTranscriber(str(model_path))
-    text = transcriber.transcribe(audio_path)
+    text = transcriber.transcribe_many([audio_path])
 
-    assert text == "ok"
+    assert text == ["ok"]
     assert seen["cmd"] == [
         "whisper-cli",
         "-m",
@@ -107,9 +107,9 @@ def test_whispercpp_uses_default_threads_when_env_unset(monkeypatch, tmp_path):
     monkeypatch.setattr("mkv_episode_matcher.transcribers.subprocess.run", fake_run)
 
     transcriber = WhispercppTranscriber(str(model_path))
-    text = transcriber.transcribe(audio_path)
+    text = transcriber.transcribe_many([audio_path])
 
-    assert text == "ok"
+    assert text == ["ok"]
     assert seen["cmd"] == [
         "whisper-cli",
         "-m",

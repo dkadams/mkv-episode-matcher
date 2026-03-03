@@ -85,7 +85,12 @@ def _transcribe_chunk_task_worker(task: ChunkTask) -> TranscriptionResultEvent:
 
     before = time.perf_counter()
     try:
-        raw = _PROCESS_TEXT_EXTRACTOR.transcriber.transcribe(task.chunk_path)
+        raw_results = _PROCESS_TEXT_EXTRACTOR.transcriber.transcribe_many([task.chunk_path])
+        if len(raw_results) != 1:
+            raise RuntimeError(
+                f"Expected 1 result for single-chunk transcription but got {len(raw_results)}"
+            )
+        raw = raw_results[0]
     except Exception as exc:  # noqa: BLE001
         return TranscriptionResultEvent(
             video_path=task.video_path,

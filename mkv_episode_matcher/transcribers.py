@@ -16,29 +16,20 @@ from loguru import logger
 class Transcriber(ABC):
     """Base transcription contract used by pipeline workers."""
 
-    BATCH_CAPABLE: bool = True
     DEFAULT_MICROBATCH_SIZE: int = 8
 
     def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
         raise NotImplementedError
 
-    def transcribe(self, audio_path: Path) -> str | None:
-        results = self.transcribe_many([audio_path])
-        return results[0] if results else None
-
 
 class SubprocessTranscriber(Transcriber):
     """Base class for backends that run external CLI executables."""
-
-    BATCH_CAPABLE = False
-    DEFAULT_MICROBATCH_SIZE = 1
 
 
 class WhispercppTranscriber(SubprocessTranscriber):
     """Thin wrapper around whisper.cpp's whisper-cli binary."""
 
     DEFAULT_THREADS = 2
-    BATCH_CAPABLE = True
     DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str, executable: str = "whisper-cli"):
@@ -182,10 +173,6 @@ class WhispercppTranscriber(SubprocessTranscriber):
 
             return texts
 
-    def _transcribe_one(self, audio_path: Path) -> str | None:
-        return self.transcribe_many([audio_path])[0]
-
-
 PARAKEET_MLX_UNSUPPORTED_MESSAGE = (
     "parakeet-mlx is only supported on macOS and requires optional dependencies "
     "(mlx, parakeet-mlx)."
@@ -206,7 +193,6 @@ class ParakeetMlxTranscriber(Transcriber):
     """Batch adapter for parakeet-mlx using model.generate()."""
 
     DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
-    BATCH_CAPABLE = True
     DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str | None):
@@ -274,10 +260,6 @@ class ParakeetMlxTranscriber(Transcriber):
                 (local_attention_context_size, local_attention_context_size),
             )
         return loaded
-
-    def transcribe(self, audio_path: Path):
-        result = self.transcribe_many([audio_path])
-        return result[0] if result else None
 
     def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
         if not audio_paths:
@@ -393,7 +375,6 @@ class FasterWhisperTranscriber(Transcriber):
     """Batch adapter for faster-whisper using BatchedInferencePipeline."""
 
     DEFAULT_MODEL = "small.en"
-    BATCH_CAPABLE = True
     DEFAULT_MICROBATCH_SIZE = 8
 
     def __init__(self, model_name: str | None):
@@ -410,7 +391,6 @@ class FasterWhisperTranscriber(Transcriber):
         self.batch_size = max(1, int(os.environ.get("FASTER_WHISPER_BATCH_SIZE", "8")))
         self.batch_debug = self._is_truthy(os.environ.get("FASTER_WHISPER_BATCH_DEBUG"))
         self._batch_counter = 0
-        self._supports_multi_input: bool | None = None
         self.pipeline = self._load_pipeline(
             self.model_name,
             device=self.device,
@@ -470,10 +450,6 @@ class FasterWhisperTranscriber(Transcriber):
         model = WhisperModel(**model_kwargs)
         return BatchedInferencePipeline(model=model)
 
-    def transcribe(self, audio_path: Path):
-        results = self.transcribe_many([audio_path])
-        return results[0] if results else None
-
     def transcribe_many(self, audio_paths: list[Path]) -> list[str | None]:
         if not audio_paths:
             return []
@@ -524,23 +500,10 @@ class FasterWhisperTranscriber(Transcriber):
         texts: list[str | None]
         if len(as_strings) == 1:
             texts = [self._transcribe_single(as_strings[0])]
-        elif self._supports_multi_input is False:
-            texts = [self._transcribe_single(path) for path in as_strings]
         else:
-            try:
-                raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
-                raw_results = raw[0] if isinstance(raw, tuple) else raw
-                texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
-                self._supports_multi_input = True
-            except Exception as exc:  # noqa: BLE001
-                if not self._is_multi_input_unsupported(exc):
-                    raise
-                self._supports_multi_input = False
-                logger.warning(
-                    "faster-whisper pipeline rejected multi-input batch mode; "
-                    "falling back to per-path transcription for this process"
-                )
-                texts = [self._transcribe_single(path) for path in as_strings]
+            raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
+            raw_results = raw[0] if isinstance(raw, tuple) else raw
+            texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
         self._debug_batch(
             "post_transcribe",
             {
@@ -556,16 +519,6 @@ class FasterWhisperTranscriber(Transcriber):
         raw = self.pipeline.transcribe(audio_path, batch_size=1)
         raw_results = raw[0] if isinstance(raw, tuple) else raw
         return self._decode_batched_results(raw_results, expected_count=1)[0]
-
-    @staticmethod
-    def _is_multi_input_unsupported(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return (
-            "no read() method" in message
-            or "readable() returned false" in message
-            or "expected str, bytes or os.pathlike" in message
-            or "path should be string" in message
-        )
 
     @classmethod
     def _decode_batched_results(cls, raw_results, *, expected_count: int) -> list[str | None]:

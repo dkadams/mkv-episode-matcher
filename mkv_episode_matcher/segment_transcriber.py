@@ -37,14 +37,16 @@ class SegmentTranscriber:
 
     @staticmethod
     def _init_transcriber(model_name, transcriber):
-        if hasattr(transcriber, "transcribe") and not isinstance(transcriber, type):
+        if hasattr(transcriber, "transcribe_many") and not isinstance(transcriber, type):
             return transcriber
         if callable(transcriber):
             try:
-                return transcriber(model_name)
+                initialized = transcriber(model_name)
             except TypeError:
-                return transcriber()
-        raise TypeError("transcriber must be a callable or object with a transcribe() method")
+                initialized = transcriber()
+            if hasattr(initialized, "transcribe_many"):
+                return initialized
+        raise TypeError("transcriber must be a callable or object with a transcribe_many() method")
 
     @staticmethod
     def _normalize_transcript(transcript):
@@ -82,10 +84,7 @@ class SegmentTranscriber:
                 .replace("[BLANK_AUDIO]", " "))
 
     def execute(self, input: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
-        if hasattr(self.transcriber, "transcribe_many"):
-            return self._execute_batch(input)
-        return {path: self.transcribe(path, chunk_indexes)
-                for path, chunk_indexes in input}
+        return self._execute_batch(input)
 
     def _execute_batch(self, inputs: list[tuple[Path, list[int]]]) -> dict[Path, Path]:
         duration = self.series.segment_duration
@@ -219,101 +218,7 @@ class SegmentTranscriber:
         return outputs
 
     def transcribe(self, path: Path, chunk_indexes: list[int]) -> Path:
-        logger.info(f"Transcribing {path} chunks: {chunk_indexes}")
-        duration = self.series.segment_duration
-        output = self._transcription_output(path)
-
-        transcribed = {}
-        total_extract_time = 0.0
-        total_transcribe_time = 0.0
-        failure_count = 0
-        with AudioChunkExtractor() as audio_extractor:
-            for index in chunk_indexes:
-                spec = self._build_spec(path, index, duration)
-                before = time.time()
-                try:
-                    chunk_path = audio_extractor.extract(
-                        spec["video_path"],
-                        spec["effective_offset_seconds"],
-                        spec["duration_seconds"],
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    failure_count += 1
-                    self._write_failure({
-                        "failure_type": "audio_extract_exception",
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(),
-                        "video_path": str(path),
-                        "segment_index": index,
-                        "base_offset_seconds": spec["base_offset_seconds"],
-                        "effective_offset_seconds": spec["effective_offset_seconds"],
-                        "duration_seconds": duration,
-                    })
-                    logger.error(f"Audio extraction failed for {path} segment {index}: {exc}")
-                    continue
-                total_extract_time += time.time() - before
-
-                before = time.time()
-                try:
-                    raw_transcript = self.transcriber.transcribe(chunk_path)
-                except Exception as exc:  # noqa: BLE001
-                    failure_count += 1
-                    self._write_failure({
-                        "failure_type": "transcribe_exception",
-                        "error": str(exc),
-                        "traceback": traceback.format_exc(),
-                        "video_path": str(path),
-                        "segment_index": index,
-                        "chunk_path": str(chunk_path),
-                        "base_offset_seconds": spec["base_offset_seconds"],
-                        "effective_offset_seconds": spec["effective_offset_seconds"],
-                        "duration_seconds": duration,
-                    })
-                    logger.error(f"Transcription backend failed for {path} segment {index}: {exc}")
-                    continue
-                text = self._normalize_transcript(raw_transcript)
-                total_transcribe_time += time.time() - before
-
-                if text:
-                    transcribed[index] = text
-                else:
-                    failure_count += 1
-                    raw_preview = str(raw_transcript)
-                    if len(raw_preview) > 300:
-                        raw_preview = raw_preview[:300] + "...[truncated]"
-                    self._write_failure({
-                        "failure_type": "empty_transcript",
-                        "video_path": str(path),
-                        "segment_index": index,
-                        "chunk_path": str(chunk_path),
-                        "base_offset_seconds": spec["base_offset_seconds"],
-                        "effective_offset_seconds": spec["effective_offset_seconds"],
-                        "duration_seconds": duration,
-                        "raw_transcript_type": type(raw_transcript).__name__,
-                        "raw_transcript_preview": raw_preview,
-                    })
-                    logger.warning(f"Failed to transcribe {chunk_path}")
-
-        logger.info(f"Extracted {len(transcribed)} audio chunks "
-                    f"in {total_extract_time:.2f}s, transcribed "
-                    f"in {total_transcribe_time:.2f}s")
-        if failure_count:
-            logger.warning(
-                f"Transcription had {failure_count} failures for {path}. "
-                f"Failure log: {self.failure_log_path}"
-            )
-
-        self._write_transcript(output, transcribed)
-        self._write_metrics(
-            output,
-            {
-                "extract_seconds": total_extract_time,
-                "transcribe_seconds": total_transcribe_time,
-                "segments_attempted": len(chunk_indexes),
-                "segments_transcribed": len(transcribed),
-            },
-        )
-        return output
+        return self.execute([(path, chunk_indexes)])[path]
 
     def _build_spec(self, path: Path, index: int, duration: int) -> dict:
         base_offset = float(index * duration)
