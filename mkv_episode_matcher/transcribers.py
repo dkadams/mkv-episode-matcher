@@ -497,13 +497,7 @@ class FasterWhisperTranscriber(Transcriber):
                 "paths": as_strings,
             },
         )
-        texts: list[str | None]
-        if len(as_strings) == 1:
-            texts = [self._transcribe_single(as_strings[0])]
-        else:
-            raw = self.pipeline.transcribe(as_strings, batch_size=len(audio_paths))
-            raw_results = raw[0] if isinstance(raw, tuple) else raw
-            texts = self._decode_batched_results(raw_results, expected_count=len(audio_paths))
+        texts = [self._transcribe_single(path) for path in as_strings]
         self._debug_batch(
             "post_transcribe",
             {

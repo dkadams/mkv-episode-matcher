@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -53,13 +54,9 @@ def test_faster_whisper_batch_transcribe_many_splits_batches(monkeypatch, tmp_pa
 
     class DummyPipeline:
         def transcribe(self, audio_input, batch_size):
-            if isinstance(audio_input, list):
-                payload = list(audio_input)
-            else:
-                payload = [audio_input]
-            calls.append((payload, batch_size))
-            rows = [[SimpleNamespace(text=f"text-{idx}")] for idx, _ in enumerate(payload)]
-            return rows, None
+            calls.append((audio_input, batch_size))
+            assert isinstance(audio_input, str)
+            return [SimpleNamespace(text=f"text-{Path(audio_input).stem}")], None
 
     monkeypatch.setattr(
         FasterWhisperTranscriber,
@@ -71,10 +68,14 @@ def test_faster_whisper_batch_transcribe_many_splits_batches(monkeypatch, tmp_pa
     paths = [tmp_path / f"chunk_{i}.wav" for i in range(5)]
     texts = transcriber.transcribe_many(paths)
 
-    assert calls[0] == ([str(paths[0]), str(paths[1])], 2)
-    assert calls[1] == ([str(paths[2]), str(paths[3])], 2)
-    assert calls[2] == ([str(paths[4])], 1)
-    assert texts == ["text-0", "text-1", "text-0", "text-1", "text-0"]
+    assert calls == [
+        (str(paths[0]), 1),
+        (str(paths[1]), 1),
+        (str(paths[2]), 1),
+        (str(paths[3]), 1),
+        (str(paths[4]), 1),
+    ]
+    assert texts == [f"text-chunk_{i}" for i in range(5)]
 
 
 def test_faster_whisper_batch_transcribe_many_handles_batch_failure(monkeypatch, tmp_path):
@@ -83,11 +84,11 @@ def test_faster_whisper_batch_transcribe_many_handles_batch_failure(monkeypatch,
     calls = []
 
     class DummyPipeline:
-        def transcribe(self, audio_paths, batch_size):
-            calls.append((list(audio_paths), batch_size))
+        def transcribe(self, audio_path, batch_size):
+            calls.append((audio_path, batch_size))
             if len(calls) == 2:
                 raise RuntimeError("boom")
-            return [[SimpleNamespace(text=f"text-{i}")] for i, _ in enumerate(audio_paths)], None
+            return [SimpleNamespace(text="ok")], None
 
     monkeypatch.setattr(
         FasterWhisperTranscriber,
@@ -97,11 +98,11 @@ def test_faster_whisper_batch_transcribe_many_handles_batch_failure(monkeypatch,
 
     transcriber = FasterWhisperTranscriber(None)
     paths = [tmp_path / f"chunk_{i}.wav" for i in range(4)]
-    with pytest.raises(RuntimeError, match="batch_id=1"):
+    with pytest.raises(RuntimeError, match="batch_id=0"):
         transcriber.transcribe_many(paths)
 
 
-def test_faster_whisper_raises_when_multi_input_is_unsupported(monkeypatch, tmp_path):
+def test_faster_whisper_never_passes_list_input(monkeypatch, tmp_path):
     monkeypatch.setattr(transcribers, "is_faster_whisper_supported", lambda: (True, None))
     monkeypatch.setenv("FASTER_WHISPER_BATCH_SIZE", "2")
     calls = []
@@ -110,7 +111,7 @@ def test_faster_whisper_raises_when_multi_input_is_unsupported(monkeypatch, tmp_
         def transcribe(self, audio, batch_size):
             calls.append((audio, batch_size))
             if isinstance(audio, list):
-                raise RuntimeError("File object has no read() method, or readable() returned False.")
+                raise AssertionError("expected per-path calls only")
             return [SimpleNamespace(text=f"text-{tmp_path.name}")], None
 
     monkeypatch.setattr(
@@ -121,8 +122,6 @@ def test_faster_whisper_raises_when_multi_input_is_unsupported(monkeypatch, tmp_
 
     transcriber = FasterWhisperTranscriber(None)
     paths = [tmp_path / "chunk_0.wav", tmp_path / "chunk_1.wav"]
-    with pytest.raises(RuntimeError, match="batch_id=0"):
-        transcriber.transcribe_many(paths)
-    assert isinstance(calls[0][0], list)
-    assert calls[0][1] == 2
-    assert len(calls) == 1
+    texts = transcriber.transcribe_many(paths)
+    assert texts == [f"text-{tmp_path.name}", f"text-{tmp_path.name}"]
+    assert calls == [(str(paths[0]), 1), (str(paths[1]), 1)]
